@@ -17,11 +17,14 @@ const Allocator = std.mem.Allocator;
 /// ```
 ///
 /// Regarding the internal organizational structure, see `generateInnerDataType`.
-pub fn Map(comptime Entity: type, comptime Enum: type, comptime Components: type) type {
-    comptime verifyTypes(Entity, Enum, Components);
+pub fn Map(comptime TEntity: type, comptime TEnum: type, comptime TComponents: type) type {
+    comptime verifyTypes(TEntity, TEnum, TComponents);
     return struct {
         const Self = @This();
         const Data = generateInnerDataType(Entity, Enum, Components);
+        pub const Entity = TEntity;
+        pub const Enum = TEnum;
+        pub const Components = TComponents;
 
         data: Data,
 
