@@ -3,7 +3,11 @@
     .version = "0.0.0",
     .fingerprint = 0xf6c171cd7e58438a,
     .minimum_zig_version = "0.17.1",
-    .dependencies = .{},
+    .dependencies = .{
+        .render = .{
+            .path = "packages/render",
+        },
+    },
     .paths = .{
         "build.zig",
         "build.zig.zon",

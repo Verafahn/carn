@@ -9,7 +9,7 @@ pub const Map = map.Map;
 /// - `world` must be a pointer to a specific ECS data implementation type.
 /// - If `io_` is `null`, it will synchronously call the runner.
 /// - `ctx` will be directly used as the second parameter of the runner.
-/// 
+///
 /// This function will generate a reasonable scheduling order based on
 /// `read`,`write`, `after`, and `before`, and make concurrent calls in this order.
 ///
