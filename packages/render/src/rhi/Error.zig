@@ -99,7 +99,7 @@ pub const GetQueue = error{
     IndexOutOfBounds,
 } || Error;
 
-pub const Op = error{
+pub const DeviceOp = error{
     /// The operation description is malformed.
     InvalidDesc,
 
