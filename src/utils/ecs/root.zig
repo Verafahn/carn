@@ -177,6 +177,8 @@ pub fn execute(io_: ?Io, world: anytype, comptime Runners: []const type, ctx: an
 
 test {
     _ = map;
+    _ = sparse_set;
+    _ = archtype;
 }
 
 const Test = struct {
