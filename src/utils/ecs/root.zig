@@ -1,8 +1,12 @@
 const std = @import("std");
 const Io = std.Io;
 const map = @import("Map.zig");
+const sparse_set = @import("SparseSet.zig");
+const archtype = @import("Archtype.zig");
 
 pub const Map = map.Map;
+pub const SparseSet = sparse_set.SparseSet;
+pub const Archtype = archtype.Archtype;
 
 /// Apply a set of systems to `world`.
 ///
@@ -173,6 +177,8 @@ pub fn execute(io_: ?Io, world: anytype, comptime Runners: []const type, ctx: an
 
 test {
     _ = map;
+    _ = sparse_set;
+    _ = archtype;
 }
 
 const Test = struct {
@@ -191,14 +197,14 @@ const Test = struct {
         vel,
     };
 
-    pub const Components = struct {
+    pub const Meta = struct {
         pos: Pos,
         vel: Vel,
     };
 
     pub const Entity = usize;
 
-    pub const World = Map(Entity, Enum, Components);
+    pub const World = Map(Entity, Meta);
     pub const Context = struct {
         dt: f32,
     };
@@ -210,9 +216,9 @@ const Test = struct {
         pub fn run(world: *World, ctx: Context) void {
             var iter = world.iterator(&.{ .pos, .vel });
             while (iter.next()) |item| {
-                const pos: *Pos, const vel: *Vel = item[1];
-                pos.x += vel.x * ctx.dt;
-                pos.y += vel.y * ctx.dt;
+                const data = item[1];
+                data.pos.x += data.vel.x * ctx.dt;
+                data.pos.y += data.vel.y * ctx.dt;
             }
         }
     };
