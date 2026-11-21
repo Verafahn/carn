@@ -1,8 +1,12 @@
 const std = @import("std");
 const Io = std.Io;
 const map = @import("Map.zig");
+const sparse_set = @import("SparseSet.zig");
+const archtype = @import("Archtype.zig");
 
 pub const Map = map.Map;
+pub const SparseSet = sparse_set.SparseSet;
+pub const Archtype = archtype.Archtype;
 
 /// Apply a set of systems to `world`.
 ///
