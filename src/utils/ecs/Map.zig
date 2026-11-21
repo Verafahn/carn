@@ -1,348 +1,659 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const HashMap = std.AutoHashMap;
+const FieldAttributes = std.builtin.Type.Struct.FieldAttributes;
 
-/// Make ECS Type.
+/// Strips every attribute from a generated field list.
 ///
-/// `Entity` requires a integer type, `Enum` requires an enum type,
-/// `Components` requires a non tuple struct type.
-/// `Enum` and `Components` requires all fields to be consistent.
+/// The attributes stored in `Meta` describe the component payload type, not
+/// the generated storage (`HashMap(Entity, T)`) or the generated pointer
+/// (`*T`), so copying them would attach default values to fields whose type
+/// no longer matches.
+fn noAttributes(comptime len: usize) [len]FieldAttributes {
+    var attrs: [len]FieldAttributes = undefined;
+    for (&attrs) |*attr| attr.* = .{};
+    return attrs;
+}
+
+/// Validates `Meta` and returns its type information.
+fn structInfo(comptime Meta: type) std.builtin.Type.Struct {
+    const info = @typeInfo(Meta);
+    return switch (info) {
+        .@"struct" => |payload| blk: {
+            if (payload.is_tuple) {
+                @compileError("Map: `Meta` must have named fields, but `" ++ @typeName(Meta) ++
+                    "` is a tuple; declare one named field per component, " ++
+                    "e.g. `struct { pos: Pos, vel: Vel }`");
+            }
+            if (payload.field_names.len == 0) {
+                @compileError("Map: `Meta` must declare at least one component field, but `" ++
+                    @typeName(Meta) ++ "` is empty; declare one named field per component, " ++
+                    "e.g. `struct { pos: Pos }`");
+            }
+            break :blk payload;
+        },
+        else => @compileError("Map: `Meta` must be a struct type, but `" ++ @typeName(Meta) ++
+            "` is a `" ++ @tagName(info) ++ "`; declare one named field per component, " ++
+            "e.g. `struct { pos: Pos, vel: Vel }`"),
+    };
+}
+
+fn MakeData(comptime Entity: type, comptime Meta: type) type {
+    const info = structInfo(Meta);
+    comptime var fields: [info.field_types.len]type = undefined;
+    inline for (&fields, 0..) |*f, i| {
+        f.* = HashMap(Entity, info.field_types[i]);
+    }
+    const attrs = noAttributes(info.field_types.len);
+    return @Struct(
+        .auto,
+        null,
+        info.field_names,
+        &fields,
+        &attrs,
+    );
+}
+
+/// An entity-component storage built from a component schema.
 ///
-/// This implementation stores data internally in a hash table:
-/// ```
-/// const InnerData = struct {
-///     pos: std.AutoHashMap(Entity, Pos),
-///     vel: std.AutoHashMap(Entity, Vel),
-///     acc: std.AutoHashMap(Entity, Acc),
-/// };
-/// ```
+/// `Map` keeps one `std.AutoHashMap(Entity, T)` per field of `Meta`: the fields
+/// of `Meta` are the components, so `Meta` doubles as the component registry,
+/// e.g. `Map(usize, struct { pos: Pos, vel: Vel })` stores a `Pos` and a `Vel`
+/// per entity.
 ///
-/// Regarding the internal organizational structure, see `generateInnerDataType`.
-pub fn Map(comptime TEntity: type, comptime TEnum: type, comptime TComponents: type) type {
-    comptime verifyTypes(TEntity, TEnum, TComponents);
+/// # Args
+/// - `Entity`: the key that identifies an entity. It must be usable as a
+///   `std.AutoHashMap` key (integer, enum, pointer, ...), so it must be
+///   hashable and comparable by value.
+/// - `Meta`: a struct with named fields; every field type is a component
+///   payload and gets its own storage map.
+///
+/// # Note
+/// The component set, the component types and their count are fixed at compile
+/// time; there is no runtime registration of new component kinds. The initial
+/// capacity of every map is zero, so `init` allocates lazily.
+///
+/// # Compile Error
+/// - `Meta` is not a struct type.
+/// - `Meta` is a tuple instead of a struct with named fields.
+/// - `Meta` declares no fields.
+///
+/// See `init`, `deinit`, `register`, `get`, `has`, `iterator`.
+pub fn Map(comptime Entity: type, comptime Meta: type) type {
     return struct {
         const Self = @This();
-        const Data = generateInnerDataType(Entity, Enum, Components);
-        pub const Entity = TEntity;
-        pub const Enum = TEnum;
-        pub const Components = TComponents;
 
+        /// The raw storage of `Self`: one `std.AutoHashMap` per component.
+        ///
+        /// Reaching into `data` bypasses the `Map` API and the compile-time
+        /// component checking that comes with it; mutating a map directly also
+        /// invalidates pointers previously returned by `Iterator.next`.
+        ///
+        /// # Note
+        /// Prefer `register`, `get` and `has` over touching the maps directly.
+        ///
+        /// See `register`, `get`, `iterator`.
+        pub const Data = MakeData(Entity, Meta);
+
+        /// The enum of component names, derived from the fields of `Meta`.
+        ///
+        /// # Note
+        /// Pass its members as the `comptime component` argument of `register`,
+        /// `unregister`, `replace`, `get`, `has` and `iterator`. Using the enum
+        /// keeps those calls checked at compile time, unlike raw tag names.
+        ///
+        /// See `TypeOf`, `iterator`.
+        pub const Component = std.meta.FieldEnum(Meta);
+
+        /// Resolves the payload type stored for one component.
+        ///
+        /// # Args
+        /// - `component`: the component whose payload type is wanted; must be
+        ///   known at compile time.
+        ///
+        /// # Return
+        /// The type of the `Meta` field named by `component`, e.g. `TypeOf(.pos)`
+        /// is `Pos` for `struct { pos: Pos }`.
+        ///
+        /// # Compile Error
+        /// `component` is not a field of `Meta`.
+        ///
+        /// See `register`, `replace`, `get`.
+        pub fn TypeOf(comptime component: Component) type {
+            return @FieldType(Meta, @tagName(component));
+        }
+
+        /// Raw per-component storage. Mutating it invalidates pointers previously
+        /// returned by `Iterator.next`; prefer the `Map` methods over using it.
         data: Data,
 
-        pub fn init(gpa: Allocator) Self {
+        /// Creates an empty `Map` with one hash map per component. Every value
+        /// returned here owns its storage and must be released with exactly one
+        /// `deinit`.
+        ///
+        /// # Args
+        /// - `allocator`: shared by every component map. `deinit` frees through
+        ///   the allocator stored inside each `std.AutoHashMap`.
+        ///
+        /// # Return
+        /// A `Map` in which no entity owns any component.
+        ///
+        /// # Note
+        /// No allocation happens here, so `init` cannot fail; the maps grow on
+        /// their first `register`.
+        ///
+        /// See `deinit`, `register`.
+        pub fn init(allocator: Allocator) Self {
+            const info = structInfo(Meta);
             var data: Data = undefined;
-            inline for (@typeInfo(Enum).@"enum".field_names) |name| {
-                @field(data, name) = .init(gpa);
+            inline for (info.field_names, info.field_types) |name, T| {
+                @field(data, name) = HashMap(Entity, T).init(allocator);
             }
             return .{ .data = data };
         }
 
+        /// Releases the storage of every component map and consumes the map. Once
+        /// this returns the map must not be used again, and no iterator over it
+        /// may still be alive.
+        ///
+        /// # Return
+        /// Nothing.
+        ///
+        /// # Note
+        /// Only the map storage is freed; the component payloads themselves are
+        /// not deinitialized. Types that own allocations must be freed first,
+        /// e.g. by walking them with `iterator` and freeing each payload.
+        ///
+        /// See `init`, `unregister`, `iterator`.
         pub fn deinit(self: *Self) void {
-            inline for (@typeInfo(Enum).@"enum".field_names) |name| {
+            const info = structInfo(Meta);
+            inline for (info.field_names) |name| {
                 @field(self.data, name).deinit();
             }
+            self.* = undefined;
         }
 
-        /// Register a new `component` for `entity` and use `data` as the initial value.
+        /// Stores `value` as `entity`'s `component`, overwriting any old payload.
+        /// An insertion may rehash the component map, so pointers previously
+        /// obtained from `Iterator.next` or from `data` become invalid.
         ///
-        /// If the component already exists, it will overwrite the old value.
+        /// # Args
+        /// - `entity`: the entity that gains the component.
+        /// - `component`: the component to write; must be known at compile time.
+        /// - `value`: the payload, stored by copy.
+        ///
+        /// # Return
+        /// `error.OutOfMemory` if the component map cannot grow, otherwise
+        /// nothing.
+        ///
+        /// # Note
+        /// An existing payload is overwritten silently, so `register` gives no
+        /// hint whether the component was already present. Use `replace` when the
+        /// previous payload is needed, or `has` to test presence first.
+        ///
+        /// # Compile Error
+        /// - `component` is not a field of `Meta`.
+        /// - `value` does not match `TypeOf(component)`.
+        ///
+        /// See `replace`, `unregister`, `get`, `has`.
         pub fn register(
             self: *Self,
             entity: Entity,
-            comptime component: Enum,
-            data: @FieldType(Components, @tagName(component)),
+            comptime component: Component,
+            value: TypeOf(component),
         ) Allocator.Error!void {
-            const p: *std.AutoHashMap(Entity, @TypeOf(data)) = &@field(
-                self.data,
-                @tagName(component),
-            );
-            try p.put(entity, data);
+            try @field(self.data, @tagName(component)).put(entity, value);
         }
 
-        /// Remove the `component` of `entity` and return its value.
+        /// Removes `entity`'s `component`, if it has one. Removal may rehash the
+        /// component map, so pointers previously obtained from `Iterator.next` or
+        /// from `data` become invalid; do not remove components while a loop over
+        /// the map is still running.
         ///
-        /// If `entity` does not have a `component`, return `null`.
-        pub fn remove(
+        /// # Args
+        /// - `entity`: the entity that loses the component.
+        /// - `component`: the component to remove; must be known at compile time.
+        ///
+        /// # Return
+        /// Nothing; removing a component the entity does not own is a no-op.
+        ///
+        /// # Note
+        /// The call never allocates and never fails, so it cannot report whether
+        /// anything was removed; use `has` to tell, or `get` to read the payload
+        /// before removing it.
+        ///
+        /// # Compile Error
+        /// `component` is not a field of `Meta`.
+        ///
+        /// See `register`, `has`, `get`, `iterator`.
+        pub fn unregister(
             self: *Self,
             entity: Entity,
-            comptime component: Enum,
-        ) ?@FieldType(Components, @tagName(component)) {
-            const p: *std.AutoHashMap(
-                Entity,
-                @FieldType(Components, @tagName(component)),
-            ) = &@field(
-                self.data,
-                @tagName(component),
-            );
-            const kv = p.fetchRemove(entity) orelse return null;
-            return kv.value;
+            comptime component: Component,
+        ) void {
+            _ = @field(self.data, @tagName(component)).remove(entity);
         }
 
-        /// Obtain a copy of the `component` data for the `entity`.
+        /// Stores `value` for `entity`'s `component`, returning the old payload.
         ///
-        /// If `entity` does not have a `component`, return `null`.
+        /// # Args
+        /// - `entity`: the entity whose payload is swapped.
+        /// - `component`: the component to update; must be known at compile time.
+        /// - `value`: the new payload, stored by copy.
+        ///
+        /// # Return
+        /// The previous payload, or `null` when `entity` does not own
+        /// `component` (nothing is written in that case).
+        ///
+        /// # Note
+        /// `replace` only updates an existing payload, so it never allocates and
+        /// never fails; use `register` if inserting a missing component is
+        /// acceptable. The `null` return does not distinguish "absent" from a
+        /// payload value, but payloads are non-optional here, so use `has` when
+        /// only presence matters.
+        ///
+        /// # Compile Error
+        /// - `component` is not a field of `Meta`.
+        /// - `value` does not match `TypeOf(component)`.
+        ///
+        /// See `register`, `get`, `has`.
+        pub fn replace(
+            self: *Self,
+            entity: Entity,
+            comptime component: Component,
+            value: TypeOf(component),
+        ) ?TypeOf(component) {
+            const slot = @field(self.data, @tagName(component)).getPtr(entity) orelse return null;
+            const old = slot.*;
+            slot.* = value;
+            return old;
+        }
+
+        /// Copies out `entity`'s payload for `component`.
+        ///
+        /// # Args
+        /// - `entity`: the entity to look up.
+        /// - `component`: the component to read; must be known at compile time.
+        ///
+        /// # Return
+        /// A copy of the stored payload, or `null` when `entity` does not own
+        /// `component`.
+        ///
+        /// # Note
+        /// A `null` result means "this entity does not have this component"; use
+        /// `has` when only presence matters, because that avoids copying the
+        /// payload. The returned value is a copy, so writing to it does not
+        /// change the stored data; use `iterator` (which yields pointers) or
+        /// `replace` to modify a component.
+        ///
+        /// # Compile Error
+        /// `component` is not a field of `Meta`.
+        ///
+        /// See `has`, `replace`, `iterator`.
         pub fn get(
             self: *Self,
             entity: Entity,
-            comptime component: Enum,
-        ) ?@FieldType(Components, @tagName(component)) {
-            const p: *std.AutoHashMap(
-                Entity,
-                @FieldType(Components, @tagName(component)),
-            ) = &@field(
-                self.data,
-                @tagName(component),
-            );
-            return p.get(entity);
+            comptime component: Component,
+        ) ?TypeOf(component) {
+            return @field(self.data, @tagName(component)).get(entity);
         }
 
-        /// Retrieve the `component` data pointer of the `entity`.
+        /// Tests whether `entity` currently owns `component`.
         ///
-        /// If `entity` does not have a `component`, return `null`.
-        pub fn getPtr(
-            self: *Self,
-            entity: Entity,
-            comptime component: Enum,
-        ) ?*@FieldType(Components, @tagName(component)) {
-            const p: *std.AutoHashMap(
-                Entity,
-                @FieldType(Components, @tagName(component)),
-            ) = &@field(
-                self.data,
-                @tagName(component),
-            );
-            return p.getPtr(entity);
+        /// # Args
+        /// - `entity`: the entity to test.
+        /// - `component`: the component to test for; must be known at compile
+        ///   time.
+        ///
+        /// # Return
+        /// `true` when a payload is stored for `entity`/`component`, otherwise
+        /// `false`.
+        ///
+        /// # Note
+        /// Prefer this over `get(...) != null` for pure existence checks: nothing
+        /// is copied and nothing is allocated.
+        ///
+        /// # Compile Error
+        /// `component` is not a field of `Meta`.
+        ///
+        /// See `get`, `register`, `unregister`.
+        pub fn has(self: *Self, entity: Entity, comptime component: Component) bool {
+            return @field(self.data, @tagName(component)).contains(entity);
         }
 
-        /// Check if the `entity` has `component`.
-        pub fn has(
-            self: *Self,
-            entity: Entity,
-            comptime component: Enum,
-        ) bool {
-            const p: *std.AutoHashMap(
-                Entity,
-                @FieldType(Components, @tagName(component)),
-            ) = &@field(
-                self.data,
-                @tagName(component),
-            );
-            return p.contains(entity);
+        /// Iterates the entities that own every requested component. The returned
+        /// iterator borrows the map: the map must outlive it and must not be
+        /// mutated through `register`, `unregister` or `deinit` until the loop
+        /// ends, otherwise the yielded pointers and the cursor become invalid.
+        ///
+        /// # Args
+        /// - `components`: the components an entity must own to be yielded; must
+        ///   be known at compile time. `components[0]` drives the scan and the
+        ///   remaining components filter the result.
+        ///
+        /// # Return
+        /// An `Iterator(components)`; each `next` call yields
+        /// `.{ entity, Item(components) }` while the iterator is not exhausted.
+        ///
+        /// # Note
+        /// Yield order follows the storage map of `components[0]` and is not
+        /// specified. Entities that miss any requested component are skipped, so
+        /// the loop visits a subset rather than stopping early.
+        ///
+        /// # Compile Error
+        /// - `components` is empty.
+        /// - `components` repeats a component name.
+        ///
+        /// See `Iterator`, `Item`, `get`, `has`.
+        pub fn iterator(self: *Self, comptime components: []const Component) Iterator(components) {
+            comptime validateComponents(components);
+            return .{
+                .ref = self,
+                .iter = @field(
+                    self.data,
+                    @tagName(components[0]),
+                ).iterator(),
+            };
         }
 
-        pub fn Iterator(comptime E: []const Enum) type {
-            return struct {
-                const Iter = @This();
-                const Component = E[1..];
-                const Base = @FieldType(Data, @tagName(E[0]));
-
-                fn Ret() type {
-                    comptime var types: [E.len]type = undefined;
-                    for (E, 0..) |component, i| {
-                        types[i] = *@FieldType(Components, @tagName(component));
+        /// Builds the item type yielded by `Iterator(components)`. Its fields are
+        /// pointers into the component maps of the iterated map, so they stay
+        /// valid only until that map is mutated.
+        ///
+        /// # Args
+        /// - `components`: the components to expose; must be known at compile
+        ///   time.
+        ///
+        /// # Return
+        /// A struct type with one mutable pointer field per requested component,
+        /// e.g. `Item(&.{.pos, .vel})` has fields `pos: *Pos` and `vel: *Vel`.
+        ///
+        /// # Note
+        /// The fields are ordered like the declaration order of `Meta`, not like
+        /// the order given in `components`, so `Item(&.{.vel, .pos})` still
+        /// declares `pos` before `vel`; access the fields by name instead of
+        /// relying on order. Items are returned inside a tuple, so `item[1]` is
+        /// the `Item` and `item[0]` is the entity.
+        ///
+        /// # Compile Error
+        /// - `components` is empty.
+        /// - `components` repeats a component name.
+        ///
+        /// See `Iterator`, `iterator`.
+        pub fn Item(comptime components: []const Component) type {
+            comptime validateComponents(components);
+            const info = structInfo(Meta);
+            comptime var names: [components.len][:0]const u8 = undefined;
+            comptime var types: [components.len]type = undefined;
+            comptime var i = 0;
+            inline for (
+                info.field_names,
+                info.field_types,
+            ) |name, ty| {
+                inline for (components) |component| {
+                    if (std.mem.eql(u8, name, @tagName(component))) {
+                        names[i] = name;
+                        types[i] = *ty;
+                        i += 1;
                     }
-                    return @Tuple(&types);
                 }
+            }
+            const attrs = noAttributes(components.len);
+            return @Struct(
+                .auto,
+                null,
+                &names,
+                &types,
+                &attrs,
+            );
+        }
 
+        /// The iterator type returned by `iterator`. It keeps a pointer to the map
+        /// it scans plus a cursor into it, so the map must outlive the iterator
+        /// and must not be mutated (or `deinit`-ed) until the iteration ends.
+        ///
+        /// # Args
+        /// - `components`: the components every yielded item owns; must be known
+        ///   at compile time.
+        ///
+        /// # Note
+        /// Obtain it through `iterator`; the type is public so it can be named in
+        /// function signatures and stored where the borrow rules allow.
+        ///
+        /// # Compile Error
+        /// - `components` is empty.
+        /// - `components` repeats a component name.
+        ///
+        /// See `iterator`, `Item`.
+        pub fn Iterator(comptime components: []const Component) type {
+            comptime validateComponents(components);
+            return struct {
                 ref: *Self,
-                base: Base.Iterator,
+                iter: HashMap(Entity, TypeOf(components[0])).Iterator,
 
-                pub fn next(self: *Iter) ?struct { Entity, Ret() } {
-                    var ret: Ret() = undefined;
-                    while (self.base.next()) |v| {
-                        const key = v.key_ptr.*;
-                        ret[0] = v.value_ptr;
-                        inline for (Component, 1..) |component, i| {
-                            if (self.ref.getPtr(key, component)) |item| {
-                                ret[i] = item;
-                            } else {
-                                return null;
+                /// Advances to the next entity that owns every requested component.
+                /// The data returned by a call aliases the maps it was taken from,
+                /// so it stays valid only until the next mutation of the iterated
+                /// map; edit payloads through the yielded pointers instead of
+                /// calling `register` again.
+                ///
+                /// # Return
+                /// `.{ entity, item }` where `item` is an `Item(components)` holding
+                /// mutable pointers to the payloads, or `null` when the iterator is
+                /// exhausted.
+                ///
+                /// # Note
+                /// Entities missing at least one requested component are skipped
+                /// rather than truncating the iteration, so `null` always means
+                /// "no more matching entities".
+                ///
+                /// See `iterator`, `Item`, `get`.
+                pub fn next(self: *Iterator(components)) ?struct { Entity, Item(components) } {
+                    iterate: while (self.iter.next()) |entry| {
+                        const entity = entry.key_ptr.*;
+                        inline for (components[1..]) |component| {
+                            if (!@field(self.ref.data, @tagName(component)).contains(entity)) {
+                                continue :iterate;
                             }
                         }
-                        return .{ key, ret };
+                        var item: Item(components) = undefined;
+                        inline for (@typeInfo(Item(components)).@"struct".field_names) |name| {
+                            @field(item, name) = @field(self.ref.data, name).getPtr(entity) orelse
+                                continue :iterate;
+                        }
+                        return .{ entity, item };
                     }
                     return null;
                 }
             };
         }
 
-        /// Joint Component Iterator
-        ///
-        /// Only entities that have all the components in `components` will be iterated to,
-        /// and component data will be returned in tuple form in the order given by the parameters.
-        pub fn iterator(self: *Self, comptime components: []const Enum) Iterator(components) {
-            return .{
-                .ref = self,
-                .base = @field(self.data, @tagName(components[0])).iterator(),
-            };
+        /// Fails compilation when `components` cannot drive an iteration.
+        fn validateComponents(comptime components: []const Component) void {
+            if (components.len == 0) {
+                @compileError("Map: `components` must contain at least one component, " ++
+                    "but it is empty; pass at least one component, e.g. `&.{.pos}`");
+            }
+            for (components, 0..) |lhs, i| {
+                for (components[i + 1 ..]) |rhs| {
+                    if (lhs == rhs) {
+                        @compileError("Map: duplicate component `." ++ @tagName(lhs) ++
+                            "` in `components`; list each component at most once, " ++
+                            "e.g. `&.{.pos, .vel}`");
+                    }
+                }
+            }
         }
     };
 }
 
-/// ```zig
-/// struct {
-///     a: usize,
-///     b: f32,
-///     c: *anyopaque,
-/// };
-/// ```
-/// transform into
-/// ```
-/// struct {
-///     a: std.AutoHashMap(Entity, usize),
-///     b: std.AutoHashMap(Entity, f32),
-///     c: std.AutoHashMap(Entity, *anyopaque),
-/// };
-/// ```
-fn generateInnerDataType(comptime Entity: type, comptime Enum: type, comptime Components: type) type {
-    const field_names = @typeInfo(Enum).@"enum".field_names;
-    const count = field_names.len;
-    comptime var types: [count]type = undefined;
-    for (@typeInfo(Components).@"struct".field_types, 0..) |T, i| {
-        types[i] = std.AutoHashMap(Entity, T);
-    }
-    comptime var attrs: [count]std.builtin.Type.Struct.FieldAttributes = undefined;
-    for (0..attrs.len) |i| {
-        attrs[i] = .{};
-    }
-    return @Struct(
-        .auto,
-        null,
-        field_names,
-        &types,
-        &attrs,
-    );
-}
-
-fn verifyTypes(comptime Entity: type, comptime Enum: type, comptime Components: type) void {
-    if (@typeInfo(Entity) != .int) {
-        @compileError("Expected integer type, but it is " ++ @typeName(Entity) ++ ".");
-    }
-    if (@typeInfo(Enum) != .@"enum") {
-        @compileError("Expected enum type, but it is " ++ @typeName(Enum) ++ ".");
-    }
-    if (@typeInfo(Components) != .@"struct" or @typeInfo(Components).@"struct".is_tuple) {
-        @compileError("Expected non tuple struct type, but it is " ++ @typeName(Enum) ++ ".");
-    }
-    const enum_field_names = @typeInfo(Enum).@"enum".field_names;
-    for (enum_field_names) |name| {
-        if (!@hasField(Components, name)) {
-            @compileError("Missing declared field " ++ name ++ ".");
-        }
-    }
-}
-
-const Test = struct {
-    pub const EntityGenerator = struct {
-        i: usize = 0,
-
-        pub fn next(self: *EntityGenerator) usize {
-            self.i +%= 1;
-            return self.i;
-        }
-    };
-
-    pub const Pos = struct {
-        x: f32,
-        y: f32,
-    };
-
-    pub const Vel = struct {
-        x: f32,
-        y: f32,
-    };
-
-    pub const Enum = enum {
-        pos,
-        vel,
-    };
-
-    pub const Component = struct {
-        pos: Pos,
-        vel: Vel,
-    };
-};
-
-const testing = std.testing;
-
-test Map {
-    const World = Map(usize, Test.Enum, Test.Component);
-    var world: World = .init(std.testing.allocator);
+test "init/deinit" {
+    var world: Map(u32, struct {
+        pos: struct { x: f32, y: f32 },
+        vel: struct { x: f32, y: f32 },
+    }) = .init(std.testing.allocator);
     defer world.deinit();
 }
 
-test "base" {
-    var g: Test.EntityGenerator = .{};
-
-    const World = Map(usize, Test.Enum, Test.Component);
-    var world: World = .init(std.testing.allocator);
+test "register/unregister" {
+    var world: Map(u32, struct {
+        pos: struct { x: f32, y: f32 },
+        vel: struct { x: f32, y: f32 },
+    }) = .init(std.testing.allocator);
     defer world.deinit();
 
-    const id1 = g.next();
-    try world.register(id1, .pos, Test.Pos{
-        .x = 10.0,
-        .y = 20.0,
-    });
-    try world.register(id1, .vel, Test.Vel{
-        .x = 1.0,
-        .y = 5.0,
+    try world.register(0, .pos, .{
+        .x = 20,
+        .y = 30,
     });
 
-    try testing.expect(world.has(id1, .pos));
-    try testing.expect(world.has(id1, .vel));
-    try testing.expectEqual(Test.Pos{
-        .x = 10.0,
-        .y = 20.0,
-    }, world.get(id1, .pos));
-    try testing.expectEqual(Test.Vel{
-        .x = 1.0,
-        .y = 5.0,
-    }, world.get(id1, .vel));
+    try std.testing.expectEqual(@TypeOf(world).TypeOf(.pos){
+        .x = 20,
+        .y = 30,
+    }, world.data.pos.get(0).?);
 
-    try testing.expectEqual(Test.Pos{
-        .x = 10.0,
-        .y = 20.0,
-    }, world.remove(id1, .pos));
-    try testing.expectEqual(Test.Vel{
-        .x = 1.0,
-        .y = 5.0,
-    }, world.remove(id1, .vel));
+    world.unregister(0, .pos);
 
-    try testing.expect(!world.has(id1, .pos));
-    try testing.expect(!world.has(id1, .vel));
+    try std.testing.expect(!world.data.pos.contains(0));
+}
+
+test "get/has" {
+    var world: Map(u32, struct {
+        pos: struct { x: f32, y: f32 },
+        vel: struct { x: f32, y: f32 },
+    }) = .init(std.testing.allocator);
+    defer world.deinit();
+
+    try world.register(0, .pos, .{
+        .x = 20,
+        .y = 30,
+    });
+
+    try std.testing.expect(world.has(0, .pos));
+    try std.testing.expect(!world.has(0, .vel));
+    try std.testing.expectEqual(@TypeOf(world).TypeOf(.pos){
+        .x = 20,
+        .y = 30,
+    }, world.get(0, .pos).?);
+
+    world.unregister(0, .pos);
+
+    try std.testing.expect(!world.has(0, .pos));
+    try std.testing.expect(!world.has(0, .vel));
+}
+
+test "replace" {
+    var world: Map(u32, struct {
+        pos: struct { x: f32, y: f32 },
+        vel: struct { x: f32, y: f32 },
+    }) = .init(std.testing.allocator);
+    defer world.deinit();
+
+    try world.register(0, .pos, .{
+        .x = 20,
+        .y = 30,
+    });
+
+    try std.testing.expectEqual(@TypeOf(world).TypeOf(.pos){
+        .x = 20,
+        .y = 30,
+    }, world.data.pos.get(0).?);
+
+    const ret = world.replace(0, .pos, .{
+        .x = 40,
+        .y = 50,
+    });
+
+    try std.testing.expectEqual(@TypeOf(world).TypeOf(.pos){
+        .x = 40,
+        .y = 50,
+    }, world.data.pos.get(0).?);
+    try std.testing.expectEqual(@TypeOf(world).TypeOf(.pos){
+        .x = 20,
+        .y = 30,
+    }, ret);
+
+    // `replace` reports absence with `null` and writes nothing.
+    try std.testing.expectEqual(@as(?@TypeOf(world).TypeOf(.vel), null), world.replace(0, .vel, .{
+        .x = 1,
+        .y = 2,
+    }));
+    try std.testing.expect(!world.has(0, .vel));
 }
 
 test "iterator" {
-    const World = Map(usize, Test.Enum, Test.Component);
-    var world: World = .init(std.testing.allocator);
+    var world: Map(u32, struct {
+        pos: struct { x: f32, y: f32 },
+        vel: struct { x: f32, y: f32 },
+    }) = .init(std.testing.allocator);
     defer world.deinit();
 
-    for (0..100) |i| {
-        if (i % 2 == 0) {
-            try world.register(i, .pos, Test.Pos{
-                .x = 20.0,
-                .y = 30.0,
-            });
-        }
-        if (i % 3 == 0) {
-            try world.register(i, .vel, Test.Vel{
-                .x = 10.0,
-                .y = 15.0,
-            });
-        }
-    }
+    try world.register(0, .pos, .{
+        .x = 20,
+        .y = 30,
+    });
+    try world.register(0, .vel, .{
+        .x = 2,
+        .y = 3,
+    });
+    try world.register(1, .pos, .{
+        .x = 50,
+        .y = 80,
+    });
+    try world.register(1, .vel, .{
+        .x = 0,
+        .y = -1,
+    });
+    // Entity 2 owns `pos` only, so an iteration over both components skips it.
+    try world.register(2, .pos, .{
+        .x = 1,
+        .y = 1,
+    });
 
-    var iter_pos = world.iterator(&.{.pos});
-    while (iter_pos.next()) |kv| {
-        try testing.expect(kv[0] % 2 == 0);
-    }
+    var visited: u32 = 0;
+    var iter = world.iterator(&.{ .pos, .vel });
+    while (iter.next()) |item| {
+        const entity = item[0];
+        const data = item[1];
+        try std.testing.expect(entity == 0 or entity == 1);
+        try std.testing.expect(world.has(entity, .pos));
+        try std.testing.expect(world.has(entity, .vel));
 
-    var iter_vel = world.iterator(&.{.vel});
-    while (iter_vel.next()) |kv| {
-        try testing.expect(kv[0] % 3 == 0);
+        // The yielded pointers alias the stored payloads.
+        data.pos.x += data.vel.x;
+        data.pos.y += data.vel.y;
+        visited += 1;
     }
+    try std.testing.expectEqual(@as(u32, 2), visited);
 
-    var iter_pos_vel = world.iterator(&.{ .pos, .vel });
-    while (iter_pos_vel.next()) |kv| {
-        try testing.expect(kv[0] % 2 == 0 and kv[0] % 3 == 0);
+    try std.testing.expectEqual(@TypeOf(world).TypeOf(.pos){
+        .x = 22,
+        .y = 33,
+    }, world.get(0, .pos).?);
+    try std.testing.expectEqual(@TypeOf(world).TypeOf(.pos){
+        .x = 50,
+        .y = 79,
+    }, world.get(1, .pos).?);
+
+    // A single-component iteration also yields the entity that misses `vel`.
+    var pos_iter = world.iterator(&.{.pos});
+    var pos_visited: u32 = 0;
+    while (pos_iter.next()) |item| {
+        try std.testing.expect(world.has(item[0], .pos));
+        pos_visited += 1;
     }
+    try std.testing.expectEqual(@as(u32, 3), pos_visited);
+}
+
+test "meta with default values" {
+    const Pos = struct { x: f32, y: f32 };
+    var world: Map(u32, struct {
+        pos: Pos = .{ .x = 0, .y = 0 },
+        vel: Pos,
+    }) = .init(std.testing.allocator);
+    defer world.deinit();
+
+    try world.register(0, .pos, .{ .x = 1, .y = 2 });
+    var iter = world.iterator(&.{.pos});
+    try std.testing.expectEqual(@as(f32, 1), iter.next().?[1].pos.x);
 }

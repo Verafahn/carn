@@ -191,14 +191,14 @@ const Test = struct {
         vel,
     };
 
-    pub const Components = struct {
+    pub const Meta = struct {
         pos: Pos,
         vel: Vel,
     };
 
     pub const Entity = usize;
 
-    pub const World = Map(Entity, Enum, Components);
+    pub const World = Map(Entity, Meta);
     pub const Context = struct {
         dt: f32,
     };
@@ -210,9 +210,9 @@ const Test = struct {
         pub fn run(world: *World, ctx: Context) void {
             var iter = world.iterator(&.{ .pos, .vel });
             while (iter.next()) |item| {
-                const pos: *Pos, const vel: *Vel = item[1];
-                pos.x += vel.x * ctx.dt;
-                pos.y += vel.y * ctx.dt;
+                const data = item[1];
+                data.pos.x += data.vel.x * ctx.dt;
+                data.pos.y += data.vel.y * ctx.dt;
             }
         }
     };
