@@ -141,40 +141,36 @@ const Triangle = struct {
         errdefer _ = backend.deinit();
 
         const device = backend.device();
-        const surface = try rhi.Resource.Surface.create(
-            device,
+        const surface = try device.createSurface(
             try nativeSurfaceDesc(window),
         );
         errdefer surface.destroy();
 
         const queue = try findGraphicsQueue(device);
 
-        const image_available = try rhi.Resource.Semaphore.create(device, .{});
+        const image_available = try device.createSemaphore(.{});
         errdefer image_available.destroy();
-        const render_finished = try rhi.Resource.Semaphore.create(device, .{});
+        const render_finished = try device.createSemaphore(.{});
         errdefer render_finished.destroy();
-        const in_flight = try rhi.Resource.Fence.create(
-            device,
-            .{ .signaled = true },
-        );
+        const in_flight = try device.createFence(.{ .signaled = true });
         errdefer in_flight.destroy();
 
-        const command_pool = try rhi.Resource.CommandPool.create(device, .{
+        const command_pool = try device.createCommandPool(.{
             .queue_family = queue.family_index,
         });
         errdefer command_pool.destroy();
-        const command_buffer = try rhi.Resource.CommandBuffer.create(device, .{
+        const command_buffer = try device.createCommandBuffer(.{
             .pool = command_pool,
         });
         errdefer command_buffer.destroy();
 
-        const vertex_shader = try rhi.Resource.Shader.create(device, .{
+        const vertex_shader = try device.createShader(.{
             .label = "triangle vertex",
             .code = @embedFile("vertex"),
             .stage = .vertex,
         });
         errdefer vertex_shader.destroy();
-        const fragment_shader = try rhi.Resource.Shader.create(device, .{
+        const fragment_shader = try device.createShader(.{
             .label = "triangle fragment",
             .code = @embedFile("fragment"),
             .stage = .fragment,
@@ -182,7 +178,7 @@ const Triangle = struct {
         errdefer fragment_shader.destroy();
 
         const vertex_stride: usize = VertexStream.vertex_layout.stride;
-        const vertex_buffer = try rhi.Resource.Buffer.create(device, .{
+        const vertex_buffer = try device.createBuffer(.{
             .label = "triangle vertices",
             .size = triangle_vertices.len * vertex_stride,
             .usage = .{ .vertex = true },
@@ -191,7 +187,7 @@ const Triangle = struct {
         errdefer vertex_buffer.destroy();
         try VertexStream.submit(&triangle_vertices, vertex_buffer);
 
-        const uniform_buffer = try rhi.Resource.Buffer.create(device, .{
+        const uniform_buffer = try device.createBuffer(.{
             .label = "triangle uniform",
             .size = UniformStream.buffer_size,
             .usage = .{ .uniform = true },
@@ -200,36 +196,29 @@ const Triangle = struct {
         errdefer uniform_buffer.destroy();
         try UniformStream.write(triangle_uniform, uniform_buffer);
 
-        const descriptor_set_layout = try rhi.Resource.DescriptorSetLayout.create(
-            device,
-            .{
-                .label = "triangle set layout",
-                .bindings = &.{.{
-                    .binding = UniformStream.binding,
-                    .kind = .uniform_buffer,
-                    .stages = .{ .fragment = true },
-                }},
-            },
-        );
+        const descriptor_set_layout = try device.createDescriptorSetLayout(.{
+            .label = "triangle set layout",
+            .bindings = &.{.{
+                .binding = UniformStream.binding,
+                .kind = .uniform_buffer,
+                .stages = .{ .fragment = true },
+            }},
+        });
         errdefer descriptor_set_layout.destroy();
 
-        const descriptor_set = try rhi.Resource.DescriptorSet.create(
-            device,
-            .{
-                .label = "triangle set",
-                .layout = descriptor_set_layout,
-            },
-        );
+        const descriptor_set = try device.createDescriptorSet(.{
+            .label = "triangle set",
+            .layout = descriptor_set_layout,
+        });
         errdefer descriptor_set.destroy();
         try descriptor_set.update(&.{.{ .buffer = .{
             .binding = UniformStream.binding,
             .buffer = uniform_buffer,
         } }});
 
-        const pipeline_layout = try rhi.Resource.PipelineLayout.create(
-            device,
-            .{ .sets = &.{descriptor_set_layout} },
-        );
+        const pipeline_layout = try device.createPipelineLayout(.{
+            .sets = &.{descriptor_set_layout},
+        });
         errdefer pipeline_layout.destroy();
 
         return .{
@@ -319,7 +308,7 @@ const Triangle = struct {
             );
         }
 
-        const swapchain = try rhi.Resource.Swapchain.create(self.device, .{
+        const swapchain = try self.device.createSwapchain(.{
             .label = "triangle swapchain",
             .surface = self.surface,
             .format = format,
@@ -331,15 +320,9 @@ const Triangle = struct {
 
         // Presentation consumes binary semaphores. Recreate them together
         // with the swapchain so a failed present cannot leave one signalled.
-        const image_available = try rhi.Resource.Semaphore.create(
-            self.device,
-            .{},
-        );
+        const image_available = try self.device.createSemaphore(.{});
         errdefer image_available.destroy();
-        const render_finished = try rhi.Resource.Semaphore.create(
-            self.device,
-            .{},
-        );
+        const render_finished = try self.device.createSemaphore(.{});
         errdefer render_finished.destroy();
 
         self.image_available.destroy();
@@ -483,7 +466,7 @@ fn createGraphicsPipeline(
     format: rhi.Resource.Format,
 ) !rhi.Resource.PipelineGraphics {
     const formats = [_]rhi.Resource.Format{format};
-    return rhi.Resource.PipelineGraphics.create(device, .{
+    return device.createPipelineGraphics(.{
         .label = "triangle pipeline",
         .layout = layout,
         .vertex = vertex,
