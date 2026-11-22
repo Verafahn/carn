@@ -24,6 +24,32 @@ pub const Desc = struct {
 handle: Resource,
 device: Device,
 
+/// Creates a compute pipeline and attributes
+/// diagnostics to `ret_addr`.
+///
+/// # Args
+/// - `device`: the device that owns the pipeline.
+/// - `desc`: shader and pipeline layout.
+/// - `ret_addr`: address of the public call site.
+///
+/// # Return
+/// A live pipeline; release it with `destroy`.
+///
+/// # Error
+/// The error contract matches `create`.
+pub fn createWithAddr(
+    device: Device,
+    desc: Desc,
+    ret_addr: usize,
+) Device.CreateError!PipelineCompute {
+    const rc_desc: Resource.Desc = .{ .pipeline_compute = desc };
+    const handle = try device.rawCreate(&rc_desc, ret_addr);
+    return .{
+        .handle = handle,
+        .device = device,
+    };
+}
+
 /// Creates a compute pipeline on `device`.
 ///
 /// # Args
@@ -49,12 +75,27 @@ pub fn create(
     device: Device,
     desc: Desc,
 ) Device.CreateError!PipelineCompute {
-    const rc_desc: Resource.Desc = .{ .pipeline_compute = desc };
-    const handle = try device.rawCreate(&rc_desc, @returnAddress());
-    return .{
-        .handle = handle,
-        .device = device,
-    };
+    return createWithAddr(device, desc, @returnAddress());
+}
+
+/// Destroys the pipeline and attributes diagnostics
+/// to `ret_addr`.
+///
+/// # Args
+/// - `ret_addr`: address of the public call site.
+///
+/// # Note
+/// The lifetime contract matches `destroy`.
+///
+/// # Panic
+/// In safety builds, the handle kind is not
+/// `pipeline_compute`.
+pub fn destroyWithAddr(
+    self: PipelineCompute,
+    ret_addr: usize,
+) void {
+    std.debug.assert(self.handle.kind == .pipeline_compute);
+    self.device.rawDestroy(self.handle, ret_addr);
 }
 
 /// Destroys the pipeline.
@@ -67,6 +108,5 @@ pub fn create(
 /// In safety builds, the handle kind is not
 /// `pipeline_compute`.
 pub fn destroy(self: PipelineCompute) void {
-    std.debug.assert(self.handle.kind == .pipeline_compute);
-    self.device.rawDestroy(self.handle, @returnAddress());
+    self.destroyWithAddr(@returnAddress());
 }

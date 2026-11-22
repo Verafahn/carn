@@ -2563,7 +2563,7 @@ test "null backend reports mapping misuse" {
 test "null backend validates command buffer lifecycle" {
     const backend = try testBackend();
     const device = backend.device();
-    const queue = try device.rawGetQueue(0, @returnAddress());
+    const queue = try device.getQueue(0);
 
     const pool = try CommandPool.create(device, .{});
     const buffer = try Buffer.create(device, .{
@@ -2593,8 +2593,8 @@ test "null backend validates command buffer lifecycle" {
     try command_buffer.record(&.{ .end = {} });
 
     const fence = try Fence.create(device, .{});
-    try queue.submit(&.{.{ .commands = &.{command_buffer}, .fence = fence }}, @returnAddress());
-    const wait = try queue.wait(&.{.{ .fence = fence }}, false, 0, @returnAddress());
+    try queue.submit(&.{.{ .commands = &.{command_buffer}, .fence = fence }});
+    const wait = try queue.wait(&.{.{ .fence = fence }}, false, 0);
     try testing.expectEqual(@as(usize, 0), wait.index);
 
     fence.destroy();
@@ -2609,7 +2609,7 @@ test "null backend validates command buffer lifecycle" {
 test "null backend rejects submit of an unended buffer" {
     const backend = try testBackend();
     const device = backend.device();
-    const queue = try device.rawGetQueue(0, @returnAddress());
+    const queue = try device.getQueue(0);
 
     const pool = try CommandPool.create(device, .{});
     const buffer = try CommandBuffer.create(device, .{ .pool = pool });
@@ -2617,7 +2617,7 @@ test "null backend rejects submit of an unended buffer" {
 
     try testing.expectError(
         error.InvalidDesc,
-        queue.submit(&.{.{ .commands = &.{buffer} }}, @returnAddress()),
+        queue.submit(&.{.{ .commands = &.{buffer} }}),
     );
 
     buffer.destroy();
@@ -2632,19 +2632,18 @@ test "null backend queries and descriptor validation" {
     const device = backend.device();
 
     var limits: Device.Limits = undefined;
-    const support = try device.rawQuery(
+    const support = try device.query(
         .limits,
         0,
         null,
         std.mem.asBytes(&limits),
-        @returnAddress(),
     );
     try testing.expectEqual(Device.Support.supported, support);
     try testing.expect(limits.max_texture_extent_2d > 0);
 
     try testing.expectError(
         error.InsufficientBuffer,
-        device.rawQuery(.limits, 0, null, null, @returnAddress()),
+        device.query(.limits, 0, null, null),
     );
 
     const layout = try DescriptorSetLayout.create(device, .{
@@ -2726,7 +2725,7 @@ test "null backend enforces queue family work kinds" {
         .verbose = false,
     });
     const device = backend.device();
-    const queue = try device.rawGetQueue(0, @returnAddress());
+    const queue = try device.getQueue(0);
 
     const layout = try PipelineLayout.create(device, .{});
     const shader = try Shader.create(device, .{
@@ -2750,7 +2749,7 @@ test "null backend enforces queue family work kinds" {
         queue.submit(&.{.{
             .commands = &.{commands},
             .signals = &.{.{ .semaphore = semaphore }},
-        }}, @returnAddress()),
+        }}),
     );
     try testing.expectError(
         error.Timeout,
@@ -2758,7 +2757,6 @@ test "null backend enforces queue family work kinds" {
             &.{.{ .semaphore = semaphore }},
             false,
             0,
-            @returnAddress(),
         ),
     );
 
@@ -2779,7 +2777,6 @@ test "null backend enforces queue family work kinds" {
             swapchain,
             image_index,
             &.{},
-            @returnAddress(),
         ),
     );
 
@@ -2799,7 +2796,7 @@ test "null backend enforces queue family work kinds" {
 test "null backend acquire failure leaves sync unsignalled" {
     const backend = try testBackend();
     const device = backend.device();
-    const queue = try device.rawGetQueue(0, @returnAddress());
+    const queue = try device.getQueue(0);
 
     const surface = try Surface.create(device, .{
         .window = 1,
@@ -2824,11 +2821,11 @@ test "null backend acquire failure leaves sync unsignalled" {
         queue.wait(&.{.{ .timeline = .{
             .semaphore = semaphore,
             .value = 1,
-        } }}, false, 0, @returnAddress()),
+        } }}, false, 0),
     );
     try testing.expectError(
         error.Timeout,
-        queue.wait(&.{.{ .fence = fence }}, false, 0, @returnAddress()),
+        queue.wait(&.{.{ .fence = fence }}, false, 0),
     );
 
     fence.destroy();

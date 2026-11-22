@@ -88,6 +88,32 @@ pub const CombinedWrite = struct {
 handle: Resource,
 device: Device,
 
+/// Creates a descriptor set and attributes
+/// diagnostics to `ret_addr`.
+///
+/// # Args
+/// - `device`: the device that owns the set.
+/// - `desc`: layout of the set.
+/// - `ret_addr`: address of the public call site.
+///
+/// # Return
+/// A live set; release it with `destroy`.
+///
+/// # Error
+/// The error contract matches `create`.
+pub fn createWithAddr(
+    device: Device,
+    desc: Desc,
+    ret_addr: usize,
+) Device.CreateError!DescriptorSet {
+    const rc_desc: Resource.Desc = .{ .descriptor_set = desc };
+    const handle = try device.rawCreate(&rc_desc, ret_addr);
+    return .{
+        .handle = handle,
+        .device = device,
+    };
+}
+
 /// Creates a descriptor set on `device`.
 ///
 /// # Args
@@ -113,12 +139,27 @@ pub fn create(
     device: Device,
     desc: Desc,
 ) Device.CreateError!DescriptorSet {
-    const rc_desc: Resource.Desc = .{ .descriptor_set = desc };
-    const handle = try device.rawCreate(&rc_desc, @returnAddress());
-    return .{
-        .handle = handle,
-        .device = device,
-    };
+    return createWithAddr(device, desc, @returnAddress());
+}
+
+/// Destroys the set and attributes diagnostics to
+/// `ret_addr`.
+///
+/// # Args
+/// - `ret_addr`: address of the public call site.
+///
+/// # Note
+/// The lifetime contract matches `destroy`.
+///
+/// # Panic
+/// In safety builds, the handle kind is not
+/// `descriptor_set`.
+pub fn destroyWithAddr(
+    self: DescriptorSet,
+    ret_addr: usize,
+) void {
+    std.debug.assert(self.handle.kind == .descriptor_set);
+    self.device.rawDestroy(self.handle, ret_addr);
 }
 
 /// Destroys the descriptor set.
@@ -131,8 +172,36 @@ pub fn create(
 /// In safety builds, the handle kind is not
 /// `descriptor_set`.
 pub fn destroy(self: DescriptorSet) void {
+    self.destroyWithAddr(@returnAddress());
+}
+
+/// Writes descriptors and attributes diagnostics to
+/// `ret_addr`.
+///
+/// # Args
+/// - `writes`: writes applied in order.
+/// - `ret_addr`: address of the public call site.
+///
+/// # Error
+/// The error contract matches `update`.
+///
+/// # Panic
+/// In safety builds, the handle kind is not
+/// `descriptor_set`.
+pub fn updateWithAddr(
+    self: DescriptorSet,
+    writes: []const Write,
+    ret_addr: usize,
+) Device.DeviceOpError!void {
     std.debug.assert(self.handle.kind == .descriptor_set);
-    self.device.rawDestroy(self.handle, @returnAddress());
+    try self.device.rawDeviceOp(
+        .{ .update_descriptor_set = .{
+            .set = self,
+            .writes = writes,
+        } },
+        null,
+        ret_addr,
+    );
 }
 
 /// Writes descriptors into the set.
@@ -165,13 +234,5 @@ pub fn update(
     self: DescriptorSet,
     writes: []const Write,
 ) Device.DeviceOpError!void {
-    std.debug.assert(self.handle.kind == .descriptor_set);
-    try self.device.rawDeviceOp(
-        .{ .update_descriptor_set = .{
-            .set = self,
-            .writes = writes,
-        } },
-        null,
-        @returnAddress(),
-    );
+    try self.updateWithAddr(writes, @returnAddress());
 }

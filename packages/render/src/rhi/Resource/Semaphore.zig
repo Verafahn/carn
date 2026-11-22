@@ -32,6 +32,32 @@ pub const Kind = enum {
 handle: Resource,
 device: Device,
 
+/// Creates a semaphore and attributes diagnostics to
+/// `ret_addr`.
+///
+/// # Args
+/// - `device`: the device that owns the semaphore.
+/// - `desc`: kind and initial value.
+/// - `ret_addr`: address of the public call site.
+///
+/// # Return
+/// A live semaphore; release it with `destroy`.
+///
+/// # Error
+/// The error contract matches `create`.
+pub fn createWithAddr(
+    device: Device,
+    desc: Desc,
+    ret_addr: usize,
+) Device.CreateError!Semaphore {
+    const rc_desc: Resource.Desc = .{ .semaphore = desc };
+    const handle = try device.rawCreate(&rc_desc, ret_addr);
+    return .{
+        .handle = handle,
+        .device = device,
+    };
+}
+
 /// Creates a semaphore on `device`.
 ///
 /// # Args
@@ -52,12 +78,27 @@ device: Device,
 /// - `error.DeviceLost`, `error.DeviceFailure`: the
 ///   device is no longer usable.
 pub fn create(device: Device, desc: Desc) Device.CreateError!Semaphore {
-    const rc_desc: Resource.Desc = .{ .semaphore = desc };
-    const handle = try device.rawCreate(&rc_desc, @returnAddress());
-    return .{
-        .handle = handle,
-        .device = device,
-    };
+    return createWithAddr(device, desc, @returnAddress());
+}
+
+/// Destroys the semaphore and attributes diagnostics
+/// to `ret_addr`.
+///
+/// # Args
+/// - `ret_addr`: address of the public call site.
+///
+/// # Note
+/// The lifetime contract matches `destroy`.
+///
+/// # Panic
+/// In safety builds, the handle kind is not
+/// `semaphore`.
+pub fn destroyWithAddr(
+    self: Semaphore,
+    ret_addr: usize,
+) void {
+    std.debug.assert(self.handle.kind == .semaphore);
+    self.device.rawDestroy(self.handle, ret_addr);
 }
 
 /// Destroys the semaphore.
@@ -71,6 +112,5 @@ pub fn create(device: Device, desc: Desc) Device.CreateError!Semaphore {
 /// In safety builds, the handle kind is not
 /// `semaphore`.
 pub fn destroy(self: Semaphore) void {
-    std.debug.assert(self.handle.kind == .semaphore);
-    self.device.rawDestroy(self.handle, @returnAddress());
+    self.destroyWithAddr(@returnAddress());
 }

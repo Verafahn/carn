@@ -59,6 +59,32 @@ pub const Language = enum {
 handle: Resource,
 device: Device,
 
+/// Creates a shader and attributes diagnostics to
+/// `ret_addr`.
+///
+/// # Args
+/// - `device`: the device that owns the shader.
+/// - `desc`: code, language, stage and entry point.
+/// - `ret_addr`: address of the public call site.
+///
+/// # Return
+/// A live shader; release it with `destroy`.
+///
+/// # Error
+/// The error contract matches `create`.
+pub fn createWithAddr(
+    device: Device,
+    desc: Desc,
+    ret_addr: usize,
+) Device.CreateError!Shader {
+    const rc_desc: Resource.Desc = .{ .shader = desc };
+    const handle = try device.rawCreate(&rc_desc, ret_addr);
+    return .{
+        .handle = handle,
+        .device = device,
+    };
+}
+
 /// Creates a shader on `device`.
 ///
 /// # Args
@@ -79,12 +105,23 @@ device: Device,
 /// - `error.DeviceLost`, `error.DeviceFailure`: the
 ///   device is no longer usable.
 pub fn create(device: Device, desc: Desc) Device.CreateError!Shader {
-    const rc_desc: Resource.Desc = .{ .shader = desc };
-    const handle = try device.rawCreate(&rc_desc, @returnAddress());
-    return .{
-        .handle = handle,
-        .device = device,
-    };
+    return createWithAddr(device, desc, @returnAddress());
+}
+
+/// Destroys the shader and attributes diagnostics to
+/// `ret_addr`.
+///
+/// # Args
+/// - `ret_addr`: address of the public call site.
+///
+/// # Note
+/// The lifetime contract matches `destroy`.
+///
+/// # Panic
+/// In safety builds, the handle kind is not `shader`.
+pub fn destroyWithAddr(self: Shader, ret_addr: usize) void {
+    std.debug.assert(self.handle.kind == .shader);
+    self.device.rawDestroy(self.handle, ret_addr);
 }
 
 /// Destroys the shader.
@@ -96,6 +133,5 @@ pub fn create(device: Device, desc: Desc) Device.CreateError!Shader {
 /// # Panic
 /// In safety builds, the handle kind is not `shader`.
 pub fn destroy(self: Shader) void {
-    std.debug.assert(self.handle.kind == .shader);
-    self.device.rawDestroy(self.handle, @returnAddress());
+    self.destroyWithAddr(@returnAddress());
 }

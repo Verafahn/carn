@@ -21,6 +21,32 @@ pub const Desc = struct {
 handle: Resource,
 device: Device,
 
+/// Creates a fence and attributes diagnostics to
+/// `ret_addr`.
+///
+/// # Args
+/// - `device`: the device that owns the fence.
+/// - `desc`: initial state.
+/// - `ret_addr`: address of the public call site.
+///
+/// # Return
+/// A live fence; release it with `destroy`.
+///
+/// # Error
+/// The error contract matches `create`.
+pub fn createWithAddr(
+    device: Device,
+    desc: Desc,
+    ret_addr: usize,
+) Device.CreateError!Fence {
+    const rc_desc: Resource.Desc = .{ .fence = desc };
+    const handle = try device.rawCreate(&rc_desc, ret_addr);
+    return .{
+        .handle = handle,
+        .device = device,
+    };
+}
+
 /// Creates a fence on `device`.
 ///
 /// # Args
@@ -39,12 +65,23 @@ device: Device,
 /// - `error.DeviceLost`, `error.DeviceFailure`: the
 ///   device is no longer usable.
 pub fn create(device: Device, desc: Desc) Device.CreateError!Fence {
-    const rc_desc: Resource.Desc = .{ .fence = desc };
-    const handle = try device.rawCreate(&rc_desc, @returnAddress());
-    return .{
-        .handle = handle,
-        .device = device,
-    };
+    return createWithAddr(device, desc, @returnAddress());
+}
+
+/// Destroys the fence and attributes diagnostics to
+/// `ret_addr`.
+///
+/// # Args
+/// - `ret_addr`: address of the public call site.
+///
+/// # Note
+/// The lifetime contract matches `destroy`.
+///
+/// # Panic
+/// In safety builds, the handle kind is not `fence`.
+pub fn destroyWithAddr(self: Fence, ret_addr: usize) void {
+    std.debug.assert(self.handle.kind == .fence);
+    self.device.rawDestroy(self.handle, ret_addr);
 }
 
 /// Destroys the fence.
@@ -56,8 +93,30 @@ pub fn create(device: Device, desc: Desc) Device.CreateError!Fence {
 /// # Panic
 /// In safety builds, the handle kind is not `fence`.
 pub fn destroy(self: Fence) void {
+    self.destroyWithAddr(@returnAddress());
+}
+
+/// Resets the fence and attributes diagnostics to
+/// `ret_addr`.
+///
+/// # Args
+/// - `ret_addr`: address of the public call site.
+///
+/// # Error
+/// The error contract matches `reset`.
+///
+/// # Panic
+/// In safety builds, the handle kind is not `fence`.
+pub fn resetWithAddr(
+    self: Fence,
+    ret_addr: usize,
+) Device.DeviceOpError!void {
     std.debug.assert(self.handle.kind == .fence);
-    self.device.rawDestroy(self.handle, @returnAddress());
+    try self.device.rawDeviceOp(
+        .{ .reset_fence = self },
+        null,
+        ret_addr,
+    );
 }
 
 /// Resets the fence to the unsignalled state.
@@ -73,10 +132,5 @@ pub fn destroy(self: Fence) void {
 /// # Panic
 /// In safety builds, the handle kind is not `fence`.
 pub fn reset(self: Fence) Device.DeviceOpError!void {
-    std.debug.assert(self.handle.kind == .fence);
-    try self.device.rawDeviceOp(
-        .{ .reset_fence = self },
-        null,
-        @returnAddress(),
-    );
+    try self.resetWithAddr(@returnAddress());
 }

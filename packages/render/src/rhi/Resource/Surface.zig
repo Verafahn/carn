@@ -44,6 +44,32 @@ pub const Platform = enum {
 handle: Resource,
 device: Device,
 
+/// Creates a surface and attributes diagnostics to
+/// `ret_addr`.
+///
+/// # Args
+/// - `device`: the device that owns the surface.
+/// - `desc`: native window and platform.
+/// - `ret_addr`: address of the public call site.
+///
+/// # Return
+/// A live surface; release it with `destroy`.
+///
+/// # Error
+/// The error contract matches `create`.
+pub fn createWithAddr(
+    device: Device,
+    desc: Desc,
+    ret_addr: usize,
+) Device.CreateError!Surface {
+    const rc_desc: Resource.Desc = .{ .surface = desc };
+    const handle = try device.rawCreate(&rc_desc, ret_addr);
+    return .{
+        .handle = handle,
+        .device = device,
+    };
+}
+
 /// Creates a surface on `device`.
 ///
 /// # Args
@@ -65,12 +91,23 @@ device: Device,
 /// - `error.DeviceLost`, `error.DeviceFailure`: the
 ///   device is no longer usable.
 pub fn create(device: Device, desc: Desc) Device.CreateError!Surface {
-    const rc_desc: Resource.Desc = .{ .surface = desc };
-    const handle = try device.rawCreate(&rc_desc, @returnAddress());
-    return .{
-        .handle = handle,
-        .device = device,
-    };
+    return createWithAddr(device, desc, @returnAddress());
+}
+
+/// Destroys the surface and attributes diagnostics to
+/// `ret_addr`.
+///
+/// # Args
+/// - `ret_addr`: address of the public call site.
+///
+/// # Note
+/// The lifetime contract matches `destroy`.
+///
+/// # Panic
+/// In safety builds, the handle kind is not `surface`.
+pub fn destroyWithAddr(self: Surface, ret_addr: usize) void {
+    std.debug.assert(self.handle.kind == .surface);
+    self.device.rawDestroy(self.handle, ret_addr);
 }
 
 /// Destroys the surface.
@@ -82,6 +119,5 @@ pub fn create(device: Device, desc: Desc) Device.CreateError!Surface {
 /// # Panic
 /// In safety builds, the handle kind is not `surface`.
 pub fn destroy(self: Surface) void {
-    std.debug.assert(self.handle.kind == .surface);
-    self.device.rawDestroy(self.handle, @returnAddress());
+    self.destroyWithAddr(@returnAddress());
 }

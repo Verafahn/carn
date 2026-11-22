@@ -2,12 +2,15 @@
 //!
 //! A `Queue` is a value that identifies one queue inside
 //! a family and carries the backend vtable needed to use
-//! it. Obtain one with `Device.rawGetQueue`.
+//! it. Obtain one with `Device.getQueue`.
 //!
 //! `submit` sends recorded command buffers to the GPU,
 //! `present` hands a swapchain image to the presentation
 //! engine, and `wait` blocks the host on synchronization
 //! objects.
+//!
+//! The `raw*` forms take an explicit call-site address;
+//! prefer `submit`, `present` and `wait`.
 
 const Device = @import("Device.zig");
 const Error = Device.Error;
@@ -239,11 +242,27 @@ pub const WaitError = error{
     Timeout,
 } || Error;
 
-/// Submits command buffers to the queue.
+/// Submits recorded work through the backend vtable.
 ///
 /// # Args
 /// - `submits`: ordered submission records.
 /// - `ret_addr`: address of the public call site.
+///
+/// # Note
+/// Prefer `submit`, which captures the call site.
+/// The error and lifetime contract matches `submit`.
+pub inline fn rawSubmit(
+    self: Queue,
+    submits: []const SubmitInfo,
+    ret_addr: usize,
+) SubmitError!void {
+    try self.vtable.submit(self.vptr, submits, ret_addr);
+}
+
+/// Submits command buffers to the queue.
+///
+/// # Args
+/// - `submits`: ordered submission records.
 ///
 /// # Error
 /// - `error.InvalidDesc`: a submission is malformed.
@@ -252,8 +271,8 @@ pub const WaitError = error{
 /// - `error.QueueState`: the queue cannot accept
 ///   submissions.
 /// - `error.OutOfMemory`: host bookkeeping fails.
-/// - `error.DeviceLost`, `error.DeviceFailure`: the
-///   device is unusable.
+/// - `error.DeviceLost`, `error.DeviceFailure`:
+///   the device is unusable.
 ///
 /// # Note
 /// The submitted command buffers and the resources
@@ -263,9 +282,38 @@ pub const WaitError = error{
 pub inline fn submit(
     self: Queue,
     submits: []const SubmitInfo,
-    ret_addr: usize,
 ) SubmitError!void {
-    try self.vtable.submit(self.vptr, submits, ret_addr);
+    try self.rawSubmit(submits, @returnAddress());
+}
+
+/// Presents an image through the backend vtable.
+///
+/// # Args
+/// - `swapchain`: swapchain owning the image.
+/// - `image_index`: index of the acquired image.
+/// - `wait_ops`: sync points to wait for.
+/// - `ret_addr`: address of the public call site.
+///
+/// # Return
+/// Whether the swapchain still matches the surface.
+///
+/// # Note
+/// Prefer `present`, which captures the call site.
+/// The error contract matches `present`.
+pub inline fn rawPresent(
+    self: Queue,
+    swapchain: Swapchain,
+    image_index: u32,
+    wait_ops: []const SyncOp,
+    ret_addr: usize,
+) PresentError!PresentResult {
+    return try self.vtable.present(
+        self.vptr,
+        swapchain.handle,
+        image_index,
+        wait_ops,
+        ret_addr,
+    );
 }
 
 /// Presents a swapchain image to the surface.
@@ -276,7 +324,6 @@ pub inline fn submit(
 ///   `Swapchain.acquire`.
 /// - `wait_ops`: sync points to wait for before
 ///   presentation; must not contain `.fence`.
-/// - `ret_addr`: address of the public call site.
 ///
 /// # Return
 /// Whether the surface still matches the swapchain.
@@ -303,18 +350,17 @@ pub inline fn present(
     swapchain: Swapchain,
     image_index: u32,
     wait_ops: []const SyncOp,
-    ret_addr: usize,
 ) PresentError!PresentResult {
-    return try self.vtable.present(
-        self.vptr,
-        swapchain.handle,
+    return try self.rawPresent(
+        swapchain,
         image_index,
         wait_ops,
-        ret_addr,
+        @returnAddress(),
     );
 }
 
-/// Blocks the host until sync points are signalled.
+/// Waits for sync points through the backend
+/// vtable.
 ///
 /// # Args
 /// - `syncs`: sync points to wait for.
@@ -326,21 +372,10 @@ pub inline fn present(
 /// # Return
 /// The sync point that ended the wait.
 ///
-/// # Error
-/// - `error.InvalidResource`: a sync point is not
-///   live or has the wrong kind.
-/// - `error.Timeout`: `timeout_ns` elapsed first.
-/// - `error.Unsupport`: the backend cannot wait on a
-///   given sync type.
-/// - `error.OutOfMemory`: host bookkeeping fails.
-/// - `error.DeviceLost`, `error.DeviceFailure`: the
-///   device is unusable.
-///
 /// # Note
-/// Timeline semaphores report their observed value in
-/// `WaitResult.value`. Fences and binary semaphores
-/// report 0.
-pub inline fn wait(
+/// Prefer `wait`, which captures the call site. The
+/// error contract matches `wait`.
+pub inline fn rawWait(
     self: Queue,
     syncs: []const SyncOp,
     wait_any: bool,
@@ -353,5 +388,44 @@ pub inline fn wait(
         wait_any,
         timeout_ns,
         ret_addr,
+    );
+}
+
+/// Blocks the host until sync points are signalled.
+///
+/// # Args
+/// - `syncs`: sync points to wait for.
+/// - `wait_any`: wait for one point instead of all.
+/// - `timeout_ns`: nanosecond timeout; null waits
+///   forever.
+///
+/// # Return
+/// The sync point that ended the wait.
+///
+/// # Error
+/// - `error.InvalidResource`: a sync point is not
+///   live or has the wrong kind.
+/// - `error.Timeout`: `timeout_ns` elapsed first.
+/// - `error.Unsupport`: the backend cannot wait on a
+///   given sync type.
+/// - `error.OutOfMemory`: host bookkeeping fails.
+/// - `error.DeviceLost`, `error.DeviceFailure`:
+///   the device is unusable.
+///
+/// # Note
+/// Timeline semaphores report their observed value in
+/// `WaitResult.value`. Fences and binary semaphores
+/// report 0.
+pub inline fn wait(
+    self: Queue,
+    syncs: []const SyncOp,
+    wait_any: bool,
+    timeout_ns: ?u64,
+) WaitError!WaitResult {
+    return try self.rawWait(
+        syncs,
+        wait_any,
+        timeout_ns,
+        @returnAddress(),
     );
 }

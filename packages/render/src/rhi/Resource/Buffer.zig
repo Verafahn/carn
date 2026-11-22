@@ -57,6 +57,32 @@ pub const Memory = enum {
 handle: Resource,
 device: Device,
 
+/// Creates a buffer and attributes diagnostics to
+/// `ret_addr`.
+///
+/// # Args
+/// - `device`: the device that owns the buffer.
+/// - `desc`: size, usage and memory domain.
+/// - `ret_addr`: address of the public call site.
+///
+/// # Return
+/// A live buffer; release it with `destroy`.
+///
+/// # Error
+/// The error contract matches `create`.
+pub fn createWithAddr(
+    device: Device,
+    desc: Desc,
+    ret_addr: usize,
+) Device.CreateError!Buffer {
+    const rc_desc: Resource.Desc = .{ .buffer = desc };
+    const handle = try device.rawCreate(&rc_desc, ret_addr);
+    return .{
+        .handle = handle,
+        .device = device,
+    };
+}
+
 /// Creates a buffer on `device`.
 ///
 /// # Args
@@ -79,12 +105,23 @@ device: Device,
 /// - `error.DeviceLost`, `error.DeviceFailure`: the
 ///   device is no longer usable.
 pub fn create(device: Device, desc: Desc) Device.CreateError!Buffer {
-    const rc_desc: Resource.Desc = .{ .buffer = desc };
-    const handle = try device.rawCreate(&rc_desc, @returnAddress());
-    return .{
-        .handle = handle,
-        .device = device,
-    };
+    return createWithAddr(device, desc, @returnAddress());
+}
+
+/// Destroys the buffer and attributes diagnostics to
+/// `ret_addr`.
+///
+/// # Args
+/// - `ret_addr`: address of the public call site.
+///
+/// # Note
+/// The lifetime contract matches `destroy`.
+///
+/// # Panic
+/// In safety builds, the handle kind is not `buffer`.
+pub fn destroyWithAddr(self: Buffer, ret_addr: usize) void {
+    std.debug.assert(self.handle.kind == .buffer);
+    self.device.rawDestroy(self.handle, ret_addr);
 }
 
 /// Destroys the buffer and releases its device memory.
@@ -97,8 +134,42 @@ pub fn create(device: Device, desc: Desc) Device.CreateError!Buffer {
 /// # Panic
 /// In safety builds, the handle kind is not `buffer`.
 pub fn destroy(self: Buffer) void {
+    self.destroyWithAddr(@returnAddress());
+}
+
+/// Maps the buffer and attributes diagnostics to
+/// `ret_addr`.
+///
+/// # Args
+/// - `offset`: byte offset of the mapped range.
+/// - `size`: byte length of the mapped range.
+/// - `flags`: requested host access.
+/// - `ret_addr`: address of the public call site.
+///
+/// # Return
+/// Host memory for `offset...offset + size`; it stays
+/// valid until `unmap`.
+///
+/// # Error
+/// The error contract matches `map`.
+///
+/// # Panic
+/// In safety builds, the handle kind is not `buffer`.
+pub fn mapWithAddr(
+    self: Buffer,
+    offset: u64,
+    size: u64,
+    flags: Device.MapFlags,
+    ret_addr: usize,
+) Device.MapError![]u8 {
     std.debug.assert(self.handle.kind == .buffer);
-    self.device.rawDestroy(self.handle, @returnAddress());
+    return try self.device.rawMap(
+        self.handle,
+        offset,
+        size,
+        flags,
+        ret_addr,
+    );
 }
 
 /// Maps the buffer into host address space.
@@ -137,14 +208,28 @@ pub fn map(
     size: u64,
     flags: Device.MapFlags,
 ) Device.MapError![]u8 {
+    return self.mapWithAddr(offset, size, flags, @returnAddress());
+}
+
+/// Releases a mapping and attributes diagnostics to
+/// `ret_addr`.
+///
+/// # Args
+/// - `dirty`: ranges written by the host.
+/// - `ret_addr`: address of the public call site.
+///
+/// # Note
+/// The lifetime contract matches `unmap`.
+///
+/// # Panic
+/// In safety builds, the handle kind is not `buffer`.
+pub fn unmapWithAddr(
+    self: Buffer,
+    dirty: []const Device.DirtyRange,
+    ret_addr: usize,
+) void {
     std.debug.assert(self.handle.kind == .buffer);
-    return try self.device.rawMap(
-        self.handle,
-        offset,
-        size,
-        flags,
-        @returnAddress(),
-    );
+    self.device.rawUnmap(self.handle, dirty, ret_addr);
 }
 
 /// Releases a mapping created by `map`.
@@ -160,6 +245,5 @@ pub fn map(
 /// # Panic
 /// In safety builds, the handle kind is not `buffer`.
 pub fn unmap(self: Buffer, dirty: []const Device.DirtyRange) void {
-    std.debug.assert(self.handle.kind == .buffer);
-    self.device.rawUnmap(self.handle, dirty, @returnAddress());
+    self.unmapWithAddr(dirty, @returnAddress());
 }

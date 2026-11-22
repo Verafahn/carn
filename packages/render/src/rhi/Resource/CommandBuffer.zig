@@ -33,6 +33,32 @@ pub const Level = enum {
 handle: Resource,
 device: Device,
 
+/// Creates a command buffer and attributes
+/// diagnostics to `ret_addr`.
+///
+/// # Args
+/// - `device`: the device that owns the buffer.
+/// - `desc`: pool and level.
+/// - `ret_addr`: address of the public call site.
+///
+/// # Return
+/// A live buffer; release it with `destroy`.
+///
+/// # Error
+/// The error contract matches `create`.
+pub fn createWithAddr(
+    device: Device,
+    desc: Desc,
+    ret_addr: usize,
+) Device.CreateError!CommandBuffer {
+    const rc_desc: Resource.Desc = .{ .command_buffer = desc };
+    const handle = try device.rawCreate(&rc_desc, ret_addr);
+    return .{
+        .handle = handle,
+        .device = device,
+    };
+}
+
 /// Creates a command buffer on `device`.
 ///
 /// # Args
@@ -58,12 +84,27 @@ pub fn create(
     device: Device,
     desc: Desc,
 ) Device.CreateError!CommandBuffer {
-    const rc_desc: Resource.Desc = .{ .command_buffer = desc };
-    const handle = try device.rawCreate(&rc_desc, @returnAddress());
-    return .{
-        .handle = handle,
-        .device = device,
-    };
+    return createWithAddr(device, desc, @returnAddress());
+}
+
+/// Destroys the buffer and attributes diagnostics to
+/// `ret_addr`.
+///
+/// # Args
+/// - `ret_addr`: address of the public call site.
+///
+/// # Note
+/// The lifetime contract matches `destroy`.
+///
+/// # Panic
+/// In safety builds, the handle kind is not
+/// `command_buffer`.
+pub fn destroyWithAddr(
+    self: CommandBuffer,
+    ret_addr: usize,
+) void {
+    std.debug.assert(self.handle.kind == .command_buffer);
+    self.device.rawDestroy(self.handle, ret_addr);
 }
 
 /// Destroys the buffer.
@@ -76,8 +117,30 @@ pub fn create(
 /// In safety builds, the handle kind is not
 /// `command_buffer`.
 pub fn destroy(self: CommandBuffer) void {
+    self.destroyWithAddr(@returnAddress());
+}
+
+/// Records one command and attributes diagnostics to
+/// `ret_addr`.
+///
+/// # Args
+/// - `cmd`: command to append; borrowed only for
+///   this call.
+/// - `ret_addr`: address of the public call site.
+///
+/// # Error
+/// The error contract matches `record`.
+///
+/// # Panic
+/// In safety builds, the handle kind is not
+/// `command_buffer`.
+pub fn recordWithAddr(
+    self: CommandBuffer,
+    cmd: *const Device.Command,
+    ret_addr: usize,
+) Device.RecordError!void {
     std.debug.assert(self.handle.kind == .command_buffer);
-    self.device.rawDestroy(self.handle, @returnAddress());
+    try self.device.rawRecord(self.handle, cmd, ret_addr);
 }
 
 /// Records one command into the buffer.
@@ -113,11 +176,30 @@ pub fn record(
     self: CommandBuffer,
     cmd: *const Device.Command,
 ) Device.RecordError!void {
+    try self.recordWithAddr(cmd, @returnAddress());
+}
+
+/// Resets the buffer and attributes diagnostics to
+/// `ret_addr`.
+///
+/// # Args
+/// - `ret_addr`: address of the public call site.
+///
+/// # Error
+/// The error contract matches `reset`.
+///
+/// # Panic
+/// In safety builds, the handle kind is not
+/// `command_buffer`.
+pub fn resetWithAddr(
+    self: CommandBuffer,
+    ret_addr: usize,
+) Device.DeviceOpError!void {
     std.debug.assert(self.handle.kind == .command_buffer);
-    try self.device.rawRecord(
-        self.handle,
-        cmd,
-        @returnAddress(),
+    try self.device.rawDeviceOp(
+        .{ .reset_command_buffer = self },
+        null,
+        ret_addr,
     );
 }
 
@@ -135,10 +217,5 @@ pub fn record(
 /// In safety builds, the handle kind is not
 /// `command_buffer`.
 pub fn reset(self: CommandBuffer) Device.DeviceOpError!void {
-    std.debug.assert(self.handle.kind == .command_buffer);
-    try self.device.rawDeviceOp(
-        .{ .reset_command_buffer = self },
-        null,
-        @returnAddress(),
-    );
+    try self.resetWithAddr(@returnAddress());
 }
