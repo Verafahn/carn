@@ -195,13 +195,19 @@ pub fn Uniform(comptime T: type) type {
         /// Binding index that shaders read.
         pub const binding: u32 = 0;
 
+        /// Minimum byte size accepted by `write`.
+        ///
+        /// The block is rounded up to a 16-byte
+        /// boundary.
+        pub const buffer_size: usize = alignForward(typeSize(T), 16);
+
         /// Serializes `value` into `buffer`.
         ///
         /// # Args
         /// - `value`: the uniform value to upload.
         /// - `buffer`: a live host-visible buffer with
-        ///   the uniform usage and a 16-byte-aligned
-        ///   block size.
+        ///   the uniform usage and at least
+        ///   `buffer_size` bytes.
         ///
         /// # Error
         /// - `error.OutOfMemory`: host bookkeeping fails.
@@ -231,7 +237,7 @@ pub fn Uniform(comptime T: type) type {
                 @compileError("Uniform.write is host-only");
             }
 
-            const size = comptime alignForward(typeSize(T), 16);
+            const size = buffer_size;
             const memory = try buffer.map(0, size, .{ .write = true });
             defer buffer.unmap(&.{.{ .offset = 0, .size = size }});
 
@@ -940,7 +946,7 @@ test "uniform write uploads a block" {
     const U = Uniform(UniformData);
     const buffer = try rhi.Resource.Buffer.create(backend.device(), .{
         .label = "test uniform",
-        .size = 32,
+        .size = U.buffer_size,
         .usage = .{ .uniform = true },
         .memory = .host,
     });
@@ -952,7 +958,7 @@ test "uniform write uploads a block" {
     value.time = 5;
     try U.write(value, buffer);
 
-    const bytes = try buffer.map(0, 32, .{ .read = true });
+    const bytes = try buffer.map(0, U.buffer_size, .{ .read = true });
     defer buffer.unmap(&.{});
 
     try std.testing.expectEqualSlices(
@@ -976,7 +982,7 @@ test "uniform small block is padded" {
     const U = Uniform(struct { value: f32 });
     const buffer = try rhi.Resource.Buffer.create(backend.device(), .{
         .label = "test small uniform",
-        .size = 16,
+        .size = U.buffer_size,
         .usage = .{ .uniform = true },
         .memory = .host,
     });
@@ -985,7 +991,7 @@ test "uniform small block is padded" {
     const value: f32 = 3.5;
     try U.write(.{ .value = value }, buffer);
 
-    const bytes = try buffer.map(0, 16, .{ .read = true });
+    const bytes = try buffer.map(0, U.buffer_size, .{ .read = true });
     defer buffer.unmap(&.{});
 
     try std.testing.expectEqualSlices(

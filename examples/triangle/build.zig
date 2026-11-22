@@ -58,6 +58,9 @@ pub fn build(b: *std.Build) !void {
             .root_source_file = b.path("src/vertex.zig"),
             .target = spirv,
             .optimize = .ReleaseSmall,
+            .imports = &.{
+                .{ .name = "carn", .module = carn.module("carn") },
+            },
         }),
         // The SPIR-V code generator lives in the self-hosted backend.
         .use_llvm = false,
@@ -68,6 +71,9 @@ pub fn build(b: *std.Build) !void {
             .root_source_file = b.path("src/fragment.zig"),
             .target = spirv,
             .optimize = .ReleaseSmall,
+            .imports = &.{
+                .{ .name = "carn", .module = carn.module("carn") },
+            },
         }),
         .use_llvm = false,
     });
