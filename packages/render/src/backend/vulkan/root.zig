@@ -1346,7 +1346,6 @@ fn testBackend() !*Backend {
         error.NoPhysicalDevice,
         error.NoQueueFamily,
         error.ApiUnsupported,
-        error.VulkanFailure,
         => return error.SkipZigTest,
         else => return err,
     };
