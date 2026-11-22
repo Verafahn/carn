@@ -7,6 +7,7 @@ pub fn build(b: *std.Build) !void {
     const render = b.dependency("render", .{
         .target = target,
         .optimize = optimize,
+        .vulkan = true,
     });
 
     const carn = b.addModule("carn", .{
@@ -14,7 +15,9 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
-            .{ .name = "rhi", .module = render.module("rhi") },
+            .{ .name = "render/rhi", .module = render.module("rhi") },
+            .{ .name = "render/null", .module = render.module("null") },
+            .{ .name = "render/vulkan", .module = render.module("vulkan") },
         },
     });
 
