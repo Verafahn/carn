@@ -1367,23 +1367,21 @@ test "vulkan backend buffers, fences and command submission" {
     const device = backend.device();
 
     var family: Device.QueueFamily = undefined;
-    const support = try device.rawQuery(
+    const support = try device.query(
         .queue_family,
         0,
         null,
         std.mem.asBytes(&family),
-        @returnAddress(),
     );
     try testing.expectEqual(Device.Support.supported, support);
     try testing.expect(family.count > 0);
 
     var limits: Device.Limits = undefined;
-    _ = try device.rawQuery(
+    _ = try device.query(
         .limits,
         0,
         null,
         std.mem.asBytes(&limits),
-        @returnAddress(),
     );
     try testing.expect(limits.max_texture_extent_2d > 0);
 
@@ -1399,7 +1397,7 @@ test "vulkan backend buffers, fences and command submission" {
     @memset(mapped, 0);
     buffer.unmap(&.{.{ .offset = 0, .size = 256 }});
 
-    const rhi_queue = try device.rawGetQueue(0, @returnAddress());
+    const rhi_queue = try device.getQueue(0);
 
     const pool = try rhi.Resource.CommandPool.create(device, .{
         .queue_family = rhi_queue.family_index,
@@ -1430,13 +1428,12 @@ test "vulkan backend buffers, fences and command submission" {
         .commands = &.{command_buffer},
         .fence = fence,
     }};
-    try rhi_queue.submit(&submissions, @returnAddress());
+    try rhi_queue.submit(&submissions);
 
     const result = try rhi_queue.wait(
         &.{.{ .fence = fence }},
         false,
         5 * std.time.ns_per_s,
-        @returnAddress(),
     );
     try testing.expectEqual(@as(usize, 0), result.index);
 
@@ -1460,12 +1457,11 @@ test "vulkan backend textures and capability queries" {
         .usage = .{ .sampled = true, .transfer_dst = true },
     };
 
-    const support = try device.rawQuery(
+    const support = try device.query(
         .{ .texture = desc },
         0,
         null,
         null,
-        @returnAddress(),
     );
     try testing.expectEqual(Device.Support.supported, support);
 
@@ -1504,7 +1500,7 @@ test "vulkan backend textures and capability queries" {
         const fence = try rhi.Resource.Fence.create(device, .{});
         defer fence.destroy();
 
-        const rhi_queue = try device.rawGetQueue(0, @returnAddress());
+        const rhi_queue = try device.getQueue(0);
         const signals = [_]Queue.SyncOp{.{
             .timeline = .{ .semaphore = semaphore, .value = 1 },
         }};
@@ -1513,7 +1509,7 @@ test "vulkan backend textures and capability queries" {
             .signals = &signals,
             .fence = fence,
         }};
-        try rhi_queue.submit(&submissions, @returnAddress());
+        try rhi_queue.submit(&submissions);
 
         const wait_ops = [_]Queue.SyncOp{
             .{ .timeline = .{ .semaphore = semaphore, .value = 1 } },
@@ -1523,7 +1519,6 @@ test "vulkan backend textures and capability queries" {
             &wait_ops,
             false,
             5 * std.time.ns_per_s,
-            @returnAddress(),
         );
         try testing.expect(result.value >= 1);
     }
@@ -1537,7 +1532,7 @@ test "vulkan backend clears a texture and reads it back" {
     }
 
     const device = backend.device();
-    const rhi_queue = try device.rawGetQueue(0, @returnAddress());
+    const rhi_queue = try device.getQueue(0);
 
     const pool = try rhi.Resource.CommandPool.create(device, .{
         .queue_family = rhi_queue.family_index,
@@ -1603,12 +1598,11 @@ test "vulkan backend clears a texture and reads it back" {
         .commands = &.{command_buffer},
         .fence = fence,
     }};
-    try rhi_queue.submit(&submissions, @returnAddress());
+    try rhi_queue.submit(&submissions);
     _ = try rhi_queue.wait(
         &.{.{ .fence = fence }},
         false,
         5 * std.time.ns_per_s,
-        @returnAddress(),
     );
 
     const data = try readback.map(0, 6 * 6 * 4, .{ .read = true });
@@ -1627,7 +1621,7 @@ test "vulkan backend replays secondary command buffers" {
     }
 
     const device = backend.device();
-    const rhi_queue = try device.rawGetQueue(0, @returnAddress());
+    const rhi_queue = try device.getQueue(0);
 
     const pool = try rhi.Resource.CommandPool.create(device, .{
         .queue_family = rhi_queue.family_index,
@@ -1677,12 +1671,11 @@ test "vulkan backend replays secondary command buffers" {
         .commands = &.{primary},
         .fence = fence,
     }};
-    try rhi_queue.submit(&submissions, @returnAddress());
+    try rhi_queue.submit(&submissions);
     _ = try rhi_queue.wait(
         &.{.{ .fence = fence }},
         false,
         5 * std.time.ns_per_s,
-        @returnAddress(),
     );
 
     const data = try buffer.map(0, 16, .{ .read = true });
@@ -1699,7 +1692,7 @@ test "vulkan backend clears depth and stencil" {
     }
 
     const device = backend.device();
-    const rhi_queue = try device.rawGetQueue(0, @returnAddress());
+    const rhi_queue = try device.getQueue(0);
 
     const pool = try rhi.Resource.CommandPool.create(device, .{
         .queue_family = rhi_queue.family_index,
@@ -1766,12 +1759,11 @@ test "vulkan backend clears depth and stencil" {
         .commands = &.{command_buffer},
         .fence = fence,
     }};
-    try rhi_queue.submit(&submissions, @returnAddress());
+    try rhi_queue.submit(&submissions);
     _ = try rhi_queue.wait(
         &.{.{ .fence = fence }},
         false,
         5 * std.time.ns_per_s,
-        @returnAddress(),
     );
 
     const data = try readback.map(0, 4 * 4 * 4, .{ .read = true });
@@ -1824,7 +1816,7 @@ test "vulkan backend creates and dispatches a compute pipeline" {
     });
     defer pipeline.destroy();
 
-    const rhi_queue = try device.rawGetQueue(0, @returnAddress());
+    const rhi_queue = try device.getQueue(0);
     const pool = try rhi.Resource.CommandPool.create(device, .{
         .queue_family = rhi_queue.family_index,
     });
@@ -1858,12 +1850,11 @@ test "vulkan backend creates and dispatches a compute pipeline" {
         .commands = &.{command_buffer},
         .fence = fence,
     }};
-    try rhi_queue.submit(&submissions, @returnAddress());
+    try rhi_queue.submit(&submissions);
     _ = try rhi_queue.wait(
         &.{.{ .fence = fence }},
         false,
         5 * std.time.ns_per_s,
-        @returnAddress(),
     );
 }
 
@@ -1932,7 +1923,7 @@ test "vulkan backend creates a graphics pipeline and draws" {
     });
     defer texture.destroy();
 
-    const rhi_queue = try device.rawGetQueue(0, @returnAddress());
+    const rhi_queue = try device.getQueue(0);
     const pool = try rhi.Resource.CommandPool.create(device, .{
         .queue_family = rhi_queue.family_index,
     });
@@ -1991,12 +1982,11 @@ test "vulkan backend creates a graphics pipeline and draws" {
         .commands = &.{command_buffer},
         .fence = fence,
     }};
-    try rhi_queue.submit(&submissions, @returnAddress());
+    try rhi_queue.submit(&submissions);
     _ = try rhi_queue.wait(
         &.{.{ .fence = fence }},
         false,
         5 * std.time.ns_per_s,
-        @returnAddress(),
     );
 }
 
@@ -2018,7 +2008,7 @@ test "vulkan backend presents through a headless swapchain" {
     };
     defer surface.destroy();
 
-    const support = try device.rawQuery(
+    const support = try device.query(
         .{ .swapchain = .{
             .format = .r8g8b8a8_unorm,
             .mode = .fifo,
@@ -2026,7 +2016,6 @@ test "vulkan backend presents through a headless swapchain" {
         0,
         surface.handle,
         null,
-        @returnAddress(),
     );
     if (support != .supported) return error.SkipZigTest;
 
@@ -2043,7 +2032,7 @@ test "vulkan backend presents through a headless swapchain" {
     };
     defer swapchain.destroy();
 
-    const rhi_queue = try device.rawGetQueue(0, @returnAddress());
+    const rhi_queue = try device.getQueue(0);
     const pool = try rhi.Resource.CommandPool.create(device, .{
         .queue_family = rhi_queue.family_index,
     });
@@ -2103,14 +2092,13 @@ test "vulkan backend presents through a headless swapchain" {
         .waits = &waits,
         .signals = &signals,
     }};
-    try rhi_queue.submit(&submissions, @returnAddress());
+    try rhi_queue.submit(&submissions);
 
     _ = try rhi_queue.present(
         swapchain,
         image_index,
         &.{.{ .semaphore = render_done }},
-        @returnAddress(),
     );
 
-    try device.waitIdle(@returnAddress());
+    try device.waitIdle();
 }
