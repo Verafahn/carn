@@ -1,0 +1,21 @@
+.{
+    .name = .render,
+    .version = "0.0.0",
+    .fingerprint = 0x945c996a5d9856d0,
+    .minimum_zig_version = "0.17.1",
+    .dependencies = .{
+        .vulkan = .{
+            .url = "git+https://github.com/Snektron/vulkan-zig.git#91a3537868952be63763db2b0725bcf9cf7f0d93",
+            .hash = "vulkan-0.0.0-r7Ytx1eHAwDInvlQSbl5gMYemczKJa6GimvWcgnOjibX",
+        },
+        .vulkan_headers = .{
+            .url = "git+https://github.com/KhronosGroup/Vulkan-Headers.git#73814d006638aa00bd553215b054f0f02e457e22",
+            .hash = "N-V-__8AAFOXiQJm2niapwlfcDuQxKKSbS6BJkr-Yud5uZGS",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
