@@ -1,8 +1,8 @@
 //! Colored triangle example.
 //!
-//! Opens a GLFW window, creates a Vulkan surface for it and draws a
-//! RGB triangle with the Vulkan backend of `carn`'s render hardware
-//! interface.
+//! Opens a GLFW window, creates a Vulkan surface for
+//! it and draws an RGB triangle with the Vulkan
+//! backend of `carn`'s render hardware interface.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -11,6 +11,30 @@ const glfw = @import("glfw");
 
 const rhi = carn.render.rhi;
 const vulkan = carn.render.vulkan;
+const shader = carn.utils.shader;
+const shared = @import("shared.zig");
+
+const VertexStream = shader.Vertex(shared.VertexData);
+const UniformStream = shader.Uniform(shared.UniformData);
+
+const triangle_vertices = [_]shared.VertexData{
+    .{
+        .position = .{ 0.0, -0.5, 0.0, 1.0 },
+        .color = .{ 1.0, 0.0, 0.0, 1.0 },
+    },
+    .{
+        .position = .{ 0.5, 0.5, 0.0, 1.0 },
+        .color = .{ 0.0, 1.0, 0.0, 1.0 },
+    },
+    .{
+        .position = .{ -0.5, 0.5, 0.0, 1.0 },
+        .color = .{ 0.0, 0.0, 1.0, 1.0 },
+    },
+};
+
+const triangle_uniform = shared.UniformData{
+    .tint = .{ 1.0, 1.0, 1.0, 1.0 },
+};
 
 const window_width = 800;
 const window_height = 600;
@@ -92,6 +116,10 @@ const Triangle = struct {
     extent: rhi.Resource.Extent,
     vertex_shader: rhi.Resource.Shader,
     fragment_shader: rhi.Resource.Shader,
+    vertex_buffer: rhi.Resource.Buffer,
+    uniform_buffer: rhi.Resource.Buffer,
+    descriptor_set_layout: rhi.Resource.DescriptorSetLayout,
+    descriptor_set: rhi.Resource.DescriptorSet,
     pipeline_layout: rhi.Resource.PipelineLayout,
     pipeline: ?rhi.Resource.PipelineGraphics,
     command_pool: rhi.Resource.CommandPool,
@@ -153,9 +181,54 @@ const Triangle = struct {
         });
         errdefer fragment_shader.destroy();
 
+        const vertex_stride: usize = VertexStream.vertex_layout.stride;
+        const vertex_buffer = try rhi.Resource.Buffer.create(device, .{
+            .label = "triangle vertices",
+            .size = triangle_vertices.len * vertex_stride,
+            .usage = .{ .vertex = true },
+            .memory = .host,
+        });
+        errdefer vertex_buffer.destroy();
+        try VertexStream.submit(&triangle_vertices, vertex_buffer);
+
+        const uniform_buffer = try rhi.Resource.Buffer.create(device, .{
+            .label = "triangle uniform",
+            .size = UniformStream.buffer_size,
+            .usage = .{ .uniform = true },
+            .memory = .host,
+        });
+        errdefer uniform_buffer.destroy();
+        try UniformStream.write(triangle_uniform, uniform_buffer);
+
+        const descriptor_set_layout = try rhi.Resource.DescriptorSetLayout.create(
+            device,
+            .{
+                .label = "triangle set layout",
+                .bindings = &.{.{
+                    .binding = UniformStream.binding,
+                    .kind = .uniform_buffer,
+                    .stages = .{ .fragment = true },
+                }},
+            },
+        );
+        errdefer descriptor_set_layout.destroy();
+
+        const descriptor_set = try rhi.Resource.DescriptorSet.create(
+            device,
+            .{
+                .label = "triangle set",
+                .layout = descriptor_set_layout,
+            },
+        );
+        errdefer descriptor_set.destroy();
+        try descriptor_set.update(&.{.{ .buffer = .{
+            .binding = UniformStream.binding,
+            .buffer = uniform_buffer,
+        } }});
+
         const pipeline_layout = try rhi.Resource.PipelineLayout.create(
             device,
-            .{},
+            .{ .sets = &.{descriptor_set_layout} },
         );
         errdefer pipeline_layout.destroy();
 
@@ -169,6 +242,10 @@ const Triangle = struct {
             .extent = .{ .width = 0, .height = 0 },
             .vertex_shader = vertex_shader,
             .fragment_shader = fragment_shader,
+            .vertex_buffer = vertex_buffer,
+            .uniform_buffer = uniform_buffer,
+            .descriptor_set_layout = descriptor_set_layout,
+            .descriptor_set = descriptor_set,
             .pipeline_layout = pipeline_layout,
             .pipeline = null,
             .command_pool = command_pool,
@@ -183,6 +260,10 @@ const Triangle = struct {
         self.dropSwapchain();
         if (self.pipeline) |pipeline| pipeline.destroy();
         self.pipeline_layout.destroy();
+        self.descriptor_set.destroy();
+        self.descriptor_set_layout.destroy();
+        self.uniform_buffer.destroy();
+        self.vertex_buffer.destroy();
         self.fragment_shader.destroy();
         self.vertex_shader.destroy();
         self.command_buffer.destroy();
@@ -322,6 +403,13 @@ const Triangle = struct {
             }},
         } });
         try self.record(.{ .bind_pipeline = .{ .graphics = pipeline } });
+        try self.record(.{ .bind_vertex_buffers = .{
+            .buffers = &.{.{ .buffer = self.vertex_buffer }},
+        } });
+        try self.record(.{ .bind_descriptor_set = .{
+            .index = 0,
+            .set = self.descriptor_set,
+        } });
         try self.record(.{ .set_viewport = .{
             .width = @floatFromInt(self.extent.width),
             .height = @floatFromInt(self.extent.height),
@@ -331,7 +419,7 @@ const Triangle = struct {
             .height = self.extent.height,
         } });
         try self.record(.{ .draw = .{
-            .vertices = .{ .count = 3 },
+            .vertices = .{ .count = triangle_vertices.len },
         } });
         try self.record(.{ .end_render_pass = {} });
 
@@ -402,6 +490,7 @@ fn createGraphicsPipeline(
         .layout = layout,
         .vertex = vertex,
         .fragment = fragment,
+        .vertex_buffers = &.{VertexStream.vertex_layout},
         .primitive = .{ .cull = .none },
         .color = .{ .formats = &formats },
     });
