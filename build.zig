@@ -7,6 +7,7 @@ pub fn build(b: *std.Build) !void {
     const render = b.dependency("render", .{
         .target = target,
         .optimize = optimize,
+        .vulkan = true,
     });
 
     const carn = b.addModule("carn", .{
