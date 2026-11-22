@@ -54,10 +54,6 @@ jobs:
           stripdown: true
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Verify Vulkan (Lavapipe)
-        if: runner.os == 'Windows'
-        run: vulkaninfo --summary
-
       - name: Build project
         run: zig build -Doptimize=${{ matrix.optimize }} --summary all
 
