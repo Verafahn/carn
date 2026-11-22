@@ -1,3 +1,9 @@
+//! ECS storage backends and the system scheduler.
+//!
+//! `Map`, `SparseSet`, and `Archtype` expose the same
+//! storage API; `execute` schedules runner types over
+//! one of them.
+
 const std = @import("std");
 const Io = std.Io;
 const map = @import("Map.zig");
@@ -8,50 +14,61 @@ pub const Map = map.Map;
 pub const SparseSet = sparse_set.SparseSet;
 pub const Archtype = archtype.Archtype;
 
-/// Apply a set of systems to `world`.
+/// Runs `Runners` against `world` in dependency order.
 ///
-/// - `world` must be a pointer to a specific ECS data implementation type.
-/// - If `io_` is `null`, it will synchronously call the runner.
-/// - `ctx` will be directly used as the second parameter of the runner.
-///
-/// This function will generate a reasonable scheduling order based on
-/// `read`,`write`, `after`, and `before`, and make concurrent calls in this order.
-///
-/// `Runner` requires:
-/// ```
-/// const Runner = struct { // any container types.
-///     // Optionals:
-///     // Which components will be read.
-///     pub const read = .{...};
-///     // Which components will be write.
-///     pub const write = .{...};
-///     // Which runners must be run after.
-///     pub const after = .{...};
-///     // Which runners must be run before.
-///     pub const before = .{...};
-///
-///     // Requries
-///     pub fn run(world: *World, ctx: Context) void {
-///         // ...
-///     }
-/// };
-/// ```
-/// e.g.
-/// ```
-/// pub const Move = struct {
+/// # Args
+/// - `io_`: the `Io` used for concurrency. When it is
+///   `null`, every runner runs synchronously on the
+///   calling thread; otherwise each layer is submitted
+///   through `io.concurrent`.
+/// - `world`: a pointer to the ECS storage to operate
+///   on.
+/// - `Runners`: the comptime list of runner types. Each
+///   type must expose `run(world, ctx)` and may declare
+///   `read`, `write`, `after`, and `before`. e.g.:
+/// ```zig
+/// const Move = struct {
 ///     pub const read = .{ .pos, .vel };
-///     pub const write = .{.pos};
+///     pub const write = .{ .pos };
 ///
 ///     pub fn run(world: *World, ctx: Context) void {
 ///         var iter = world.iterator(&.{ .pos, .vel });
 ///         while (iter.next()) |item| {
-///             const pos: *Pos, const vel: *Vel = item[1];
-///             pos.x += vel.x * ctx.dt;
-///             pos.y += vel.y * ctx.dt;
+///             const data = item[1];
+///             data.pos.x += data.vel.x * ctx.dt;
+///             data.pos.y += data.vel.y * ctx.dt;
 ///         }
 ///     }
 /// };
 /// ```
+/// - `ctx`: passed unchanged as the second argument of
+///   every `run` call.
+///
+/// # Error
+/// - `error.ConcurrencyUnavailable`: `io_` is not
+///   `null` and the backend cannot start a task.
+///
+/// # Note
+/// A runner declares the components it touches with
+/// `read` and `write`, and its ordering with `after`
+/// and `before`; all four declarations are optional.
+///
+/// Two runners without conflicting declarations may
+/// share a layer and run concurrently; layers are
+/// synchronization points. Ordering and conflict
+/// detection are resolved at compile time.
+///
+/// # Compile Error
+/// - `Runners` contains a dependency cycle.
+/// - An `after` or `before` entry is not a member of
+///   `Runners`.
+/// - With two or more runners, a `read` or `write`
+///   entry is not a member of `world.Enum`.
+/// - A runner type has no `run` declaration, or its
+///   `run` cannot be called with `(world, ctx)`.
+/// - With two or more runners, `world` is not a
+///   pointer, or its pointee does not declare
+///   `Enum`.
 pub fn execute(io_: ?Io, world: anytype, comptime Runners: []const type, ctx: anytype) !void {
     const step = ct: {
         const utils = struct {

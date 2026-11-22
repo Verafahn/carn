@@ -4,9 +4,10 @@ const FieldAttributes = std.builtin.Type.Struct.FieldAttributes;
 
 /// Strips every attribute from a generated field list.
 ///
-/// The attributes stored in `Meta` describe the component payload type, not
-/// the generated storage (`Set(Entity, T)`), so copying them would attach
-/// default values to fields whose type no longer matches.
+/// Attributes in `Meta` describe the payload type, not
+/// the generated `Set(Entity, T)` storage, so copying
+/// them would attach defaults to fields whose type no
+/// longer matches.
 fn noAttributes(comptime len: usize) [len]FieldAttributes {
     var attrs: [len]FieldAttributes = undefined;
     for (&attrs) |*attr| attr.* = .{};
@@ -36,21 +37,25 @@ fn structInfo(comptime Meta: type) std.builtin.Type.Struct {
     };
 }
 
-/// One sparse set: a packed `dense` list of entities, a parallel `values` list
-/// and a `sparse` index that maps an entity back to its dense slot.
+/// One sparse set: a packed `dense` list of entities, a
+/// parallel `values` list and a `sparse` index that
+/// maps an entity back to its `dense` slot.
 ///
-/// Lookups are O(1) like a hash map, but the packed `dense`/`values` pair also
-/// makes iteration cache friendly. Removal is swap-remove, so the dense order
-/// changes whenever an entity is removed.
+/// Lookups are O(1) like a hash map, but the packed
+/// `dense`/`values` pair also makes iteration cache
+/// friendly. Removal is a swap-remove, so the `dense`
+/// order changes whenever an entity is removed.
 fn Set(comptime Entity: type, comptime T: type) type {
     return struct {
         const Self = @This();
 
-        /// Packed entity ids; `dense[i]` owns `values[i]`.
+        /// Packed entity ids; `dense[i]` owns
+        /// `values[i]`.
         dense: std.ArrayList(Entity),
         /// Payloads parallel to `dense`.
         values: std.ArrayList(T),
-        /// Maps an entity to its index in `dense`/`values`.
+        /// Maps an entity to its index in
+        /// `dense`/`values`.
         sparse: std.AutoHashMap(Entity, usize),
         allocator: Allocator,
 
@@ -135,97 +140,100 @@ fn MakeData(comptime Entity: type, comptime Meta: type) type {
     );
 }
 
-/// An entity-component storage built from a component schema.
+/// An entity-component storage built from a schema.
 ///
-/// `SparseSet` keeps one sparse set per field of `Meta`: the fields of `Meta`
-/// are the components, so `Meta` doubles as the component registry, e.g.
-/// `SparseSet(usize, struct { pos: Pos, vel: Vel })` stores a `Pos` and a `Vel`
-/// per entity.
+/// `SparseSet` keeps one sparse set per field of
+/// `Meta`: each field is a component, so `Meta` doubles
+/// as the component registry. For example,
+/// `SparseSet(usize, struct { pos: Pos })` stores a
+/// `Pos` per entity.
 ///
 /// # Args
-/// - `Entity`: the key that identifies an entity. It must be usable as a
-///   `std.AutoHashMap` key (integer, enum, pointer, ...), so it must be
-///   hashable and comparable by value.
-/// - `Meta`: a struct with named fields; every field type is a component
-///   payload and gets its own sparse set.
+/// - `Entity`: identifies an entity; usable as a
+///   `std.AutoHashMap` key, so hashable and
+///   comparable by value.
+/// - `Meta`: a struct with named fields; each field
+///   type is a component payload and gets its own
+///   sparse set.
 ///
 /// # Note
-/// The component set, the component types and their count are fixed at compile
-/// time; there is no runtime registration of new component kinds. The initial
-/// capacity of every set is zero, so `init` allocates lazily.
+/// The component set, its types, and their count are
+/// fixed at compile time; no new component kinds can
+/// be added at runtime. `init` starts empty and
+/// allocates lazily.
 ///
 /// # Compile Error
 /// - `Meta` is not a struct type.
-/// - `Meta` is a tuple instead of a struct with named fields.
+/// - `Meta` is a tuple, not a struct with named
+///   fields.
 /// - `Meta` declares no fields.
-///
-/// See `init`, `deinit`, `register`, `get`, `has`, `iterator`.
 pub fn SparseSet(comptime Entity: type, comptime Meta: type) type {
     return struct {
         const Self = @This();
 
-        /// The raw storage of `Self`: one sparse set per component.
+        /// The raw storage of `Self`: one sparse set per
+        /// component.
         ///
-        /// Reaching into `data` bypasses the `SparseSet` API and the
-        /// compile-time component checking that comes with it; mutating a set
-        /// directly also invalidates pointers previously returned by
+        /// Reaching into `data` bypasses the
+        /// `SparseSet` API and its compile-time
+        /// component checking; mutating it also
+        /// invalidates pointers previously returned by
         /// `Iterator.next`.
         ///
         /// # Note
-        /// Prefer `register`, `get` and `has` over touching the sets directly.
-        ///
-        /// See `register`, `get`, `iterator`.
+        /// Prefer `register`, `get`, and `has` over
+        /// touching the sets directly.
         pub const Data = MakeData(Entity, Meta);
 
-        /// The enum of component names, derived from the fields of `Meta`.
+        /// The enum of component names, derived from the
+        /// fields of `Meta`.
         ///
         /// # Note
-        /// Pass its members as the `comptime component` argument of `register`,
-        /// `unregister`, `replace`, `get`, `has` and `iterator`. Using the enum
-        /// keeps those calls checked at compile time, unlike raw tag names.
-        ///
-        /// See `TypeOf`, `iterator`.
+        /// Pass its members as the `comptime component`
+        /// argument of `register`, `unregister`,
+        /// `replace`, `get`, `has`, and `iterator`, so
+        /// those calls are checked at compile time.
         pub const Component = std.meta.FieldEnum(Meta);
 
-        /// Resolves the payload type stored for one component.
+        /// Resolves the payload type of one component.
         ///
         /// # Args
-        /// - `component`: the component whose payload type is wanted; must be
-        ///   known at compile time.
+        /// - `component`: the component whose payload
+        ///   type is wanted; must be known at compile
+        ///   time.
         ///
         /// # Return
-        /// The type of the `Meta` field named by `component`, e.g. `TypeOf(.pos)`
-        /// is `Pos` for `struct { pos: Pos }`.
+        /// The type of the `Meta` field named by
+        /// `component`; `TypeOf(.pos)` is `Pos` for
+        /// `struct { pos: Pos }`.
         ///
         /// # Compile Error
         /// `component` is not a field of `Meta`.
-        ///
-        /// See `register`, `replace`, `get`.
         pub fn TypeOf(comptime component: Component) type {
             return @FieldType(Meta, @tagName(component));
         }
 
-        /// Raw per-component storage. Mutating it invalidates pointers previously
-        /// returned by `Iterator.next`; prefer the `SparseSet` methods over using
-        /// it.
+        /// Raw per-component storage. Mutating it
+        /// invalidates pointers previously returned by
+        /// `Iterator.next`; prefer the `SparseSet`
+        /// methods.
         data: Data,
 
-        /// Creates an empty `SparseSet` with one sparse set per component. Every
-        /// value returned here owns its storage and must be released with
-        /// exactly one `deinit`.
+        /// Creates an empty `SparseSet` with one set per
+        /// component.
         ///
         /// # Args
-        /// - `allocator`: shared by every component set. `deinit` frees through
-        ///   the allocator stored inside each set.
+        /// - `allocator`: shared by every component set;
+        ///   `deinit` frees through it.
         ///
         /// # Return
-        /// A `SparseSet` in which no entity owns any component.
+        /// A `SparseSet` in which no entity owns any
+        /// component.
         ///
         /// # Note
-        /// No allocation happens here, so `init` cannot fail; the sets grow on
-        /// their first `register`.
-        ///
-        /// See `deinit`, `register`.
+        /// No allocation happens here, so `init` cannot
+        /// fail; the sets grow on their first
+        /// `register`.
         pub fn init(allocator: Allocator) Self {
             const info = structInfo(Meta);
             var data: Data = undefined;
@@ -235,19 +243,17 @@ pub fn SparseSet(comptime Entity: type, comptime Meta: type) type {
             return .{ .data = data };
         }
 
-        /// Releases the storage of every component set and consumes the value.
-        /// Once this returns the set must not be used again, and no iterator
-        /// over it may still be alive.
-        ///
-        /// # Return
-        /// Nothing.
+        /// Releases every component set and consumes the
+        /// value.
         ///
         /// # Note
-        /// Only the set storage is freed; the component payloads themselves are
-        /// not deinitialized. Types that own allocations must be freed first,
-        /// e.g. by walking them with `iterator` and freeing each payload.
+        /// The value must not be used again, and no
+        /// iterator over it may still be alive.
         ///
-        /// See `init`, `unregister`, `iterator`.
+        /// Only set storage is freed; payloads are not
+        /// deinitialized. Free allocation-owning
+        /// payloads first, e.g. by walking them with
+        /// `iterator`.
         pub fn deinit(self: *Self) void {
             const info = structInfo(Meta);
             inline for (info.field_names) |name| {
@@ -256,28 +262,33 @@ pub fn SparseSet(comptime Entity: type, comptime Meta: type) type {
             self.* = undefined;
         }
 
-        /// Stores `value` as `entity`'s `component`, overwriting any old payload.
-        /// An insertion may grow the dense lists, so pointers previously
-        /// obtained from `Iterator.next` become invalid.
+        /// Stores `value` as `entity`'s `component`,
+        /// overwriting any old payload.
         ///
         /// # Args
-        /// - `entity`: the entity that gains the component.
-        /// - `component`: the component to write; must be known at compile time.
+        /// - `entity`: the entity that gains the
+        ///   component.
+        /// - `component`: the component to write; must
+        ///   be known at compile time.
         /// - `value`: the payload, stored by copy.
         ///
-        /// # Return
-        /// `error.OutOfMemory` if the set cannot grow, otherwise nothing.
+        /// # Error
+        /// - `error.OutOfMemory`: the set must grow and
+        ///   the allocation fails.
         ///
         /// # Note
-        /// An existing payload is overwritten silently, so `register` gives no
-        /// hint whether the component was already present. Use `replace` when
-        /// the previous payload is needed, or `has` to test presence first.
+        /// An insertion may grow the `dense` lists, so
+        /// pointers previously obtained from
+        /// `Iterator.next` become invalid.
+        ///
+        /// An existing payload is overwritten
+        /// silently; use `replace` to get it back, or
+        /// `has` to test presence first.
         ///
         /// # Compile Error
         /// - `component` is not a field of `Meta`.
-        /// - `value` does not match `TypeOf(component)`.
-        ///
-        /// See `replace`, `unregister`, `get`, `has`.
+        /// - `value` does not match
+        ///   `TypeOf(component)`.
         pub fn register(
             self: *Self,
             entity: Entity,
@@ -287,28 +298,29 @@ pub fn SparseSet(comptime Entity: type, comptime Meta: type) type {
             try @field(self.data, @tagName(component)).put(entity, value);
         }
 
-        /// Removes `entity`'s `component`, if it has one. Removal is a
-        /// swap-remove, so the iteration order of the affected set changes and
-        /// pointers previously obtained from `Iterator.next` may become
-        /// invalid; do not remove components while a loop over the set is still
-        /// running.
+        /// Removes `entity`'s `component`, if present.
         ///
         /// # Args
-        /// - `entity`: the entity that loses the component.
-        /// - `component`: the component to remove; must be known at compile time.
-        ///
-        /// # Return
-        /// Nothing; removing a component the entity does not own is a no-op.
+        /// - `entity`: the entity that loses the
+        ///   component.
+        /// - `component`: the component to remove; must
+        ///   be known at compile time.
         ///
         /// # Note
-        /// The call never allocates and never fails, so it cannot report whether
-        /// anything was removed; use `has` to tell, or `get` to read the payload
-        /// before removing it.
+        /// Removing a component the entity does not own
+        /// is a no-op; the call never allocates, never
+        /// fails, and cannot report whether anything was
+        /// removed. Use `has` to tell, or `get` to read
+        /// the payload first.
+        ///
+        /// Removal is a swap-remove, so `dense` order
+        /// changes and pointers previously obtained from
+        /// `Iterator.next` may become invalid. Do not
+        /// remove components while a loop over the set is
+        /// running.
         ///
         /// # Compile Error
         /// `component` is not a field of `Meta`.
-        ///
-        /// See `register`, `has`, `get`, `iterator`.
         pub fn unregister(
             self: *Self,
             entity: Entity,
@@ -317,29 +329,30 @@ pub fn SparseSet(comptime Entity: type, comptime Meta: type) type {
             @field(self.data, @tagName(component)).remove(entity);
         }
 
-        /// Stores `value` for `entity`'s `component`, returning the old payload.
+        /// Stores `value` for `entity`'s `component` and
+        /// returns the previous payload.
         ///
         /// # Args
-        /// - `entity`: the entity whose payload is swapped.
-        /// - `component`: the component to update; must be known at compile time.
+        /// - `entity`: the entity whose payload is
+        ///   swapped.
+        /// - `component`: the component to update; must
+        ///   be known at compile time.
         /// - `value`: the new payload, stored by copy.
         ///
         /// # Return
-        /// The previous payload, or `null` when `entity` does not own
-        /// `component` (nothing is written in that case).
+        /// The previous payload, or `null` when
+        /// `entity` does not own `component`; nothing is
+        /// written in that case.
         ///
         /// # Note
-        /// `replace` only updates an existing payload, so it never allocates and
-        /// never fails; use `register` if inserting a missing component is
-        /// acceptable. The `null` return does not distinguish "absent" from a
-        /// payload value, but payloads are non-optional here, so use `has` when
-        /// only presence matters.
+        /// Only an existing payload is updated, so
+        /// `replace` never allocates and never fails.
+        /// Use `register` to insert a missing component.
         ///
         /// # Compile Error
         /// - `component` is not a field of `Meta`.
-        /// - `value` does not match `TypeOf(component)`.
-        ///
-        /// See `register`, `get`, `has`.
+        /// - `value` does not match
+        ///   `TypeOf(component)`.
         pub fn replace(
             self: *Self,
             entity: Entity,
@@ -356,23 +369,22 @@ pub fn SparseSet(comptime Entity: type, comptime Meta: type) type {
         ///
         /// # Args
         /// - `entity`: the entity to look up.
-        /// - `component`: the component to read; must be known at compile time.
+        /// - `component`: the component to read; must
+        ///   be known at compile time.
         ///
         /// # Return
-        /// A copy of the stored payload, or `null` when `entity` does not own
-        /// `component`.
+        /// A copy of the stored payload, or `null` when
+        /// `entity` does not own `component`.
         ///
         /// # Note
-        /// A `null` result means "this entity does not have this component"; use
-        /// `has` when only presence matters, because that avoids copying the
-        /// payload. The returned value is a copy, so writing to it does not
-        /// change the stored data; use `iterator` (which yields pointers) or
-        /// `replace` to modify a component.
+        /// The returned value is a copy, so writing to
+        /// it does not change the stored data. Use
+        /// `has` for a presence check, `replace` to
+        /// update in place, or `iterator` to get
+        /// pointers.
         ///
         /// # Compile Error
         /// `component` is not a field of `Meta`.
-        ///
-        /// See `has`, `replace`, `iterator`.
         pub fn get(
             self: *Self,
             entity: Entity,
@@ -381,53 +393,57 @@ pub fn SparseSet(comptime Entity: type, comptime Meta: type) type {
             return @field(self.data, @tagName(component)).get(entity);
         }
 
-        /// Tests whether `entity` currently owns `component`.
+        /// Tests whether `entity` owns `component`.
         ///
         /// # Args
         /// - `entity`: the entity to test.
-        /// - `component`: the component to test for; must be known at compile
-        ///   time.
+        /// - `component`: the component to test for;
+        ///   must be known at compile time.
         ///
         /// # Return
-        /// `true` when a payload is stored for `entity`/`component`, otherwise
-        /// `false`.
+        /// `true` when a payload is stored for the pair,
+        /// otherwise `false`.
         ///
         /// # Note
-        /// Prefer this over `get(...) != null` for pure existence checks: nothing
+        /// Prefer this over `get(...) != null`: nothing
         /// is copied and nothing is allocated.
         ///
         /// # Compile Error
         /// `component` is not a field of `Meta`.
-        ///
-        /// See `get`, `register`, `unregister`.
         pub fn has(self: *Self, entity: Entity, comptime component: Component) bool {
             return @field(self.data, @tagName(component)).contains(entity);
         }
 
-        /// Iterates the entities that own every requested component. The returned
-        /// iterator borrows the value: it must outlive it and it must not be
-        /// mutated through `register`, `unregister` or `deinit` until the loop
-        /// ends, otherwise the yielded pointers and the cursor become invalid.
+        /// Iterates the entities that own every requested
+        /// component.
         ///
         /// # Args
-        /// - `components`: the components an entity must own to be yielded; must
-        ///   be known at compile time. `components[0]` drives the scan and the
-        ///   remaining components filter the result.
+        /// - `components`: the components an entity must
+        ///   own to be yielded; must be known at compile
+        ///   time. `components[0]` drives the scan and
+        ///   the rest filter the result.
         ///
         /// # Return
-        /// An `Iterator(components)`; each `next` call yields
-        /// `.{ entity, Item(components) }` while the iterator is not exhausted.
+        /// An `Iterator(components)`; each `next` call
+        /// yields `.{ entity, Item(components) }` until
+        /// it returns `null`.
         ///
         /// # Note
-        /// Yield order follows the dense list of `components[0]` and is not
-        /// specified. Entities that miss any requested component are skipped, so
-        /// the loop visits a subset rather than stopping early.
+        /// The iterator borrows the value, which must
+        /// outlive it and must not be mutated through
+        /// `register`, `unregister`, or `deinit` until
+        /// the loop ends, otherwise the yielded pointers
+        /// become invalid.
+        ///
+        /// Yield order follows the `dense` list of
+        /// `components[0]` and is unspecified. Entities
+        /// missing a requested component are skipped, so
+        /// the loop visits a subset rather than stopping
+        /// early.
         ///
         /// # Compile Error
         /// - `components` is empty.
         /// - `components` repeats a component name.
-        ///
-        /// See `Iterator`, `Item`, `get`, `has`.
         pub fn iterator(self: *Self, comptime components: []const Component) Iterator(components) {
             comptime validateComponents(components);
             return .{
@@ -436,30 +452,28 @@ pub fn SparseSet(comptime Entity: type, comptime Meta: type) type {
             };
         }
 
-        /// Builds the item type yielded by `Iterator(components)`. Its fields are
-        /// pointers into the component sets of the iterated value, so they stay
-        /// valid only until that value is mutated.
+        /// Builds the item type yielded by
+        /// `Iterator(components)`.
         ///
         /// # Args
-        /// - `components`: the components to expose; must be known at compile
-        ///   time.
+        /// - `components`: the components to expose; must
+        ///   be known at compile time.
         ///
         /// # Return
-        /// A struct type with one mutable pointer field per requested component,
-        /// e.g. `Item(&.{.pos, .vel})` has fields `pos: *Pos` and `vel: *Vel`.
+        /// A struct type with one mutable pointer field
+        /// per requested component, e.g.
+        /// `Item(&.{.pos, .vel})` has `pos: *Pos` and
+        /// `vel: *Vel`.
         ///
         /// # Note
-        /// The fields are ordered like the declaration order of `Meta`, not like
-        /// the order given in `components`, so `Item(&.{.vel, .pos})` still
-        /// declares `pos` before `vel`; access the fields by name instead of
-        /// relying on order. Items are returned inside a tuple, so `item[1]` is
-        /// the `Item` and `item[0]` is the entity.
+        /// Fields follow the declaration order of `Meta`,
+        /// not the order in `components`, so access them
+        /// by name. Fields are pointers into the sets and
+        /// stay valid only until the value is mutated.
         ///
         /// # Compile Error
         /// - `components` is empty.
         /// - `components` repeats a component name.
-        ///
-        /// See `Iterator`, `iterator`.
         pub fn Item(comptime components: []const Component) type {
             comptime validateComponents(components);
             const info = structInfo(Meta);
@@ -488,47 +502,53 @@ pub fn SparseSet(comptime Entity: type, comptime Meta: type) type {
             );
         }
 
-        /// The iterator type returned by `iterator`. It keeps a pointer to the
-        /// value it scans plus a cursor into the dense list of the first
-        /// component, so the value must outlive the iterator and must not be
-        /// mutated (or `deinit`-ed) until the iteration ends.
+        /// The iterator type returned by `iterator`.
         ///
         /// # Args
-        /// - `components`: the components every yielded item owns; must be known
-        ///   at compile time.
+        /// - `components`: the components every yielded
+        ///   item owns; must be known at compile time.
         ///
         /// # Note
-        /// Obtain it through `iterator`; the type is public so it can be named in
-        /// function signatures and stored where the borrow rules allow.
+        /// It holds a pointer to the value plus a cursor
+        /// into the `dense` list of the first component,
+        /// so the value must outlive the iterator and
+        /// must not be mutated or deinitialized until the
+        /// iteration ends.
+        ///
+        /// Obtain it through `iterator`; the type is
+        /// public so it can be named in signatures.
         ///
         /// # Compile Error
         /// - `components` is empty.
         /// - `components` repeats a component name.
-        ///
-        /// See `iterator`, `Item`.
         pub fn Iterator(comptime components: []const Component) type {
             comptime validateComponents(components);
             return struct {
+                /// The `SparseSet` being iterated.
                 ref: *Self,
+                /// Cursor into the dense list
+                /// of the first component.
                 index: usize,
 
-                /// Advances to the next entity that owns every requested component.
-                /// The data returned by a call aliases the dense lists it was taken
-                /// from, so it stays valid only until the next mutation of the
-                /// iterated value; edit payloads through the yielded pointers
-                /// instead of calling `register` again.
+                /// Advances to the next entity that owns
+                /// every requested component.
                 ///
                 /// # Return
-                /// `.{ entity, item }` where `item` is an `Item(components)` holding
-                /// mutable pointers to the payloads, or `null` when the iterator is
-                /// exhausted.
+                /// `.{ entity, item }`, where `item` is
+                /// an `Item(components)` holding mutable
+                /// pointers to the payloads, or `null`
+                /// when the iterator is exhausted.
                 ///
                 /// # Note
-                /// Entities missing at least one requested component are skipped
-                /// rather than truncating the iteration, so `null` always means
-                /// "no more matching entities".
+                /// The returned data aliases the `dense`
+                /// lists it was taken from, so it stays
+                /// valid only until the value is mutated;
+                /// edit payloads through the pointers
+                /// instead of calling `register` again.
                 ///
-                /// See `iterator`, `Item`, `get`.
+                /// Entities missing a requested component
+                /// are skipped, so `null` always means "no
+                /// more matching entities".
                 pub fn next(self: *Iterator(components)) ?struct { Entity, Item(components) } {
                     const first = &@field(self.ref.data, @tagName(components[0]));
                     iterate: while (self.index < first.dense.items.len) {
@@ -551,7 +571,8 @@ pub fn SparseSet(comptime Entity: type, comptime Meta: type) type {
             };
         }
 
-        /// Fails compilation when `components` cannot drive an iteration.
+        /// Rejects a `components` list that cannot
+        /// drive an iteration.
         fn validateComponents(comptime components: []const Component) void {
             if (components.len == 0) {
                 @compileError("SparseSet: `components` must contain at least one component, " ++

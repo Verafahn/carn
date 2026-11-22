@@ -4,9 +4,10 @@ const FieldAttributes = std.builtin.Type.Struct.FieldAttributes;
 
 /// Strips every attribute from a generated field list.
 ///
-/// The attributes stored in `Meta` describe the component payload type, not
-/// the generated storage, so copying them would attach default values to
-/// fields whose type no longer matches.
+/// Attributes in `Meta` describe the payload type, not
+/// the generated `columns`, so copying them would
+/// attach defaults to fields whose type no longer
+/// matches.
 fn noAttributes(comptime len: usize) [len]FieldAttributes {
     var attrs: [len]FieldAttributes = undefined;
     for (&attrs) |*attr| attr.* = .{};
@@ -36,8 +37,8 @@ fn structInfo(comptime Meta: type) std.builtin.Type.Struct {
     };
 }
 
-/// Builds the column struct of one archetype: one `std.ArrayList` per component
-/// selected by `mask`.
+/// Builds the column struct of one archetype: one
+/// `std.ArrayList` per component selected by `mask`.
 fn MakeColumns(comptime Meta: type, comptime mask: usize) type {
     const info = structInfo(Meta);
     const selected = comptime blk: {
@@ -69,8 +70,9 @@ fn MakeColumns(comptime Meta: type, comptime mask: usize) type {
     );
 }
 
-/// One archetype: the packed entities that share the component set encoded by
-/// `mask`, their columns, and an index from entity to row.
+/// One archetype: the packed entities that share the
+/// component set encoded by `mask`, their `columns`, and
+/// an index from entity to row.
 fn ArchetypeStore(comptime Entity: type, comptime Meta: type, comptime mask: usize) type {
     const info = structInfo(Meta);
     const Columns = MakeColumns(Meta, mask);
@@ -78,11 +80,13 @@ fn ArchetypeStore(comptime Entity: type, comptime Meta: type, comptime mask: usi
     return struct {
         const Self = @This();
 
-        /// Columns of this archetype; every column has one entry per row.
+        /// Columns of this archetype; every column has
+        /// one entry per row.
         columns: Columns,
         /// Packed entities, parallel to every column.
         entities: std.ArrayList(Entity),
-        /// Maps an entity to its row in `entities` and every column.
+        /// Maps an entity to its row in `entities` and
+        /// every column.
         rows: std.AutoHashMap(Entity, usize),
         allocator: Allocator,
 
@@ -116,7 +120,8 @@ fn ArchetypeStore(comptime Entity: type, comptime Meta: type, comptime mask: usi
             return self.rows.get(entity);
         }
 
-        /// Reserves one row in every column and in the entity index.
+        /// Reserves one row in every column and in the
+        /// entity index.
         fn ensureRowCapacity(self: *Self, allocator: Allocator) Allocator.Error!void {
             try self.entities.ensureUnusedCapacity(allocator, 1);
             inline for (info.field_names, 0..) |name, i| {
@@ -127,8 +132,9 @@ fn ArchetypeStore(comptime Entity: type, comptime Meta: type, comptime mask: usi
             try self.rows.ensureUnusedCapacity(1);
         }
 
-        /// Removes one row with a swap-remove and keeps the surviving rows
-        /// addressable. Never allocates.
+        /// Removes one row with a swap-remove and keeps
+        /// the surviving rows addressable. It never
+        /// allocates.
         fn removeRow(self: *Self, entity: Entity) void {
             const row = self.rows.get(entity) orelse return;
             const last = self.entities.items.len - 1;
@@ -176,34 +182,40 @@ fn MakeData(comptime Entity: type, comptime Meta: type) type {
     );
 }
 
-/// An entity-component storage built from a component schema.
+/// An entity-component storage built from a schema.
 ///
-/// `Archtype` groups entities by their set of components: every non-empty
-/// subset of the fields of `Meta` is one archetype, and entities that own the
-/// exact same components share a packed row in that archetype. A component is
-/// stored in a column, so iteration over an archetype walks contiguous memory.
+/// `Archtype` groups entities by their set of
+/// components: every non-empty subset of the fields of
+/// `Meta` is one archetype, and entities that own the
+/// same components share a packed row there. Columns
+/// hold the payloads, so iterating an archetype walks
+/// contiguous memory.
 ///
 /// # Args
-/// - `Entity`: the key that identifies an entity. It must be usable as a
-///   `std.AutoHashMap` key (integer, enum, pointer, ...), so it must be
-///   hashable and comparable by value.
-/// - `Meta`: a struct with named fields; every field type is a component
-///   payload and becomes a column of the archetypes that contain it.
+/// - `Entity`: identifies an entity; usable as a
+///   `std.AutoHashMap` key, so hashable and
+///   comparable by value.
+/// - `Meta`: a struct with named fields; each field
+///   type is a component payload and becomes a column
+///   of the archetypes that contain it.
 ///
 /// # Note
-/// The component set, the component types and their count are fixed at compile
-/// time; there is no runtime registration of new component kinds. Moving an
-/// entity between archetypes on `register` may allocate, while `unregister`
-/// only clears the logical component bit so it stays infallible. Removing a
-/// component therefore leaves the entity in its old row until the entity loses
-/// its last component; iteration filters those rows through the logical mask.
+/// The component set, its types, and their count are
+/// fixed at compile time; no new component kinds can
+/// be added at runtime. `register` may allocate when
+/// it adds a row or moves an entity to another
+/// archetype, while `unregister` only clears the
+/// logical bit and stays infallible. A removed
+/// component therefore remains physically stored
+/// until the entity loses its last component, but
+/// iteration filters rows by the logical mask so it
+/// is never observable.
 ///
 /// # Compile Error
 /// - `Meta` is not a struct type.
-/// - `Meta` is a tuple instead of a struct with named fields.
+/// - `Meta` is a tuple, not a struct with named
+///   fields.
 /// - `Meta` declares no fields.
-///
-/// See `init`, `deinit`, `register`, `get`, `has`, `iterator`.
 pub fn Archtype(comptime Entity: type, comptime Meta: type) type {
     return struct {
         const Self = @This();
@@ -212,77 +224,78 @@ pub fn Archtype(comptime Entity: type, comptime Meta: type) type {
         const Record = struct {
             /// Components the entity logically owns.
             logical: usize,
-            /// Components the archetype physically stores for the entity.
-            /// Always a superset of `logical`.
+            /// Components the archetype physically
+            /// stores for the entity. Always a superset
+            /// of `logical`.
             physical: usize,
         };
 
-        /// The raw storage of `Self`: one archetype per non-empty component set.
+        /// The raw storage of `Self`: one archetype per
+        /// non-empty component set.
         ///
-        /// Reaching into `data` bypasses the `Archtype` API and the compile-time
-        /// component checking that comes with it; mutating an archetype
-        /// directly also invalidates pointers previously returned by
-        /// `Iterator.next`.
+        /// Reaching into `data` bypasses the `Archtype`
+        /// API and its compile-time component checking;
+        /// mutating it also invalidates pointers
+        /// previously returned by `Iterator.next`.
         ///
         /// # Note
-        /// Prefer `register`, `get` and `has` over touching the archetypes
-        /// directly.
-        ///
-        /// See `register`, `get`, `iterator`.
+        /// Prefer `register`, `get`, and `has` over
+        /// touching the archetypes directly.
         pub const Data = MakeData(Entity, Meta);
 
-        /// The enum of component names, derived from the fields of `Meta`.
+        /// The enum of component names, derived from the
+        /// fields of `Meta`.
         ///
         /// # Note
-        /// Pass its members as the `comptime component` argument of `register`,
-        /// `unregister`, `replace`, `get`, `has` and `iterator`. Using the enum
-        /// keeps those calls checked at compile time, unlike raw tag names.
-        ///
-        /// See `TypeOf`, `iterator`.
+        /// Pass its members as the `comptime component`
+        /// argument of `register`, `unregister`,
+        /// `replace`, `get`, `has`, and `iterator`, so
+        /// those calls are checked at compile time.
         pub const Component = std.meta.FieldEnum(Meta);
 
-        /// Resolves the payload type stored for one component.
+        /// Resolves the payload type of one component.
         ///
         /// # Args
-        /// - `component`: the component whose payload type is wanted; must be
-        ///   known at compile time.
+        /// - `component`: the component whose payload
+        ///   type is wanted; must be known at compile
+        ///   time.
         ///
         /// # Return
-        /// The type of the `Meta` field named by `component`, e.g. `TypeOf(.pos)`
-        /// is `Pos` for `struct { pos: Pos }`.
+        /// The type of the `Meta` field named by
+        /// `component`; `TypeOf(.pos)` is `Pos` for
+        /// `struct { pos: Pos }`.
         ///
         /// # Compile Error
         /// `component` is not a field of `Meta`.
-        ///
-        /// See `register`, `replace`, `get`.
         pub fn TypeOf(comptime component: Component) type {
             return @FieldType(Meta, @tagName(component));
         }
 
-        /// Raw per-archetype storage. Mutating it invalidates pointers previously
-        /// returned by `Iterator.next`; prefer the `Archtype` methods over using
-        /// it.
+        /// Raw per-archetype storage. Mutating it
+        /// invalidates pointers previously returned by
+        /// `Iterator.next`; prefer the `Archtype`
+        /// methods.
         data: Data,
 
-        /// Logical and physical component masks of every live entity.
+        /// Logical and physical component masks of every
+        /// live entity.
         entities: std.AutoHashMap(Entity, Record),
 
-        /// Creates an empty `Archtype` with one storage per component set. Every
-        /// value returned here owns its storage and must be released with
-        /// exactly one `deinit`.
+        /// Creates an empty `Archtype` with one storage
+        /// per component set.
         ///
         /// # Args
-        /// - `allocator`: shared by every archetype. `deinit` frees through the
-        ///   allocator stored inside each archetype.
+        /// - `allocator`: shared by every archetype;
+        ///   `deinit` frees through it.
         ///
         /// # Return
-        /// An `Archtype` in which no entity owns any component.
+        /// An `Archtype` in which no entity owns any
+        /// component.
         ///
         /// # Note
-        /// No allocation happens here, so `init` cannot fail; the archetypes
-        /// grow on their first `register`.
-        ///
-        /// See `deinit`, `register`.
+        /// No allocation happens here, so `init` cannot
+        /// fail; archetypes grow on their first
+        /// `register`.
         pub fn init(allocator: Allocator) Self {
             var data: Data = undefined;
             const data_info = @typeInfo(Data).@"struct";
@@ -295,19 +308,17 @@ pub fn Archtype(comptime Entity: type, comptime Meta: type) type {
             };
         }
 
-        /// Releases the storage of every archetype and consumes the value. Once
-        /// this returns the value must not be used again, and no iterator over
-        /// it may still be alive.
-        ///
-        /// # Return
-        /// Nothing.
+        /// Releases every archetype and consumes the
+        /// value.
         ///
         /// # Note
-        /// Only the archetype storage is freed; the component payloads themselves
-        /// are not deinitialized. Types that own allocations must be freed first,
-        /// e.g. by walking them with `iterator` and freeing each payload.
+        /// The value must not be used again, and no
+        /// iterator over it may still be alive.
         ///
-        /// See `init`, `unregister`, `iterator`.
+        /// Only archetype storage is freed; payloads are
+        /// not deinitialized. Free allocation-owning
+        /// payloads first, e.g. by walking them with
+        /// `iterator`.
         pub fn deinit(self: *Self) void {
             const data_info = @typeInfo(Data).@"struct";
             inline for (data_info.field_names) |name| {
@@ -317,30 +328,35 @@ pub fn Archtype(comptime Entity: type, comptime Meta: type) type {
             self.* = undefined;
         }
 
-        /// Stores `value` as `entity`'s `component`, overwriting any old payload.
-        /// Adding a component the entity did not physically have may move it to
-        /// another archetype, which can reallocate and invalidates pointers
-        /// previously obtained from `Iterator.next`.
+        /// Stores `value` as `entity`'s `component`,
+        /// overwriting any old payload.
         ///
         /// # Args
-        /// - `entity`: the entity that gains the component.
-        /// - `component`: the component to write; must be known at compile time.
+        /// - `entity`: the entity that gains the
+        ///   component.
+        /// - `component`: the component to write; must
+        ///   be known at compile time.
         /// - `value`: the payload, stored by copy.
         ///
-        /// # Return
-        /// `error.OutOfMemory` if the target archetype cannot grow, otherwise
-        /// nothing.
+        /// # Error
+        /// - `error.OutOfMemory`: the entity index or the
+        ///   target archetype must grow and the allocation
+        ///   fails.
         ///
         /// # Note
-        /// An existing payload is overwritten silently, so `register` gives no
-        /// hint whether the component was already present. Use `replace` when the
-        /// previous payload is needed, or `has` to test presence first.
+        /// Adding a component the entity lacks may move
+        /// it to another archetype, which can reallocate
+        /// and invalidates pointers previously obtained
+        /// from `Iterator.next`.
+        ///
+        /// An existing payload is overwritten
+        /// silently; use `replace` to get it back, or
+        /// `has` to test presence first.
         ///
         /// # Compile Error
         /// - `component` is not a field of `Meta`.
-        /// - `value` does not match `TypeOf(component)`.
-        ///
-        /// See `replace`, `unregister`, `get`, `has`.
+        /// - `value` does not match
+        ///   `TypeOf(component)`.
         pub fn register(
             self: *Self,
             entity: Entity,
@@ -392,26 +408,26 @@ pub fn Archtype(comptime Entity: type, comptime Meta: type) type {
             unreachable;
         }
 
-        /// Removes `entity`'s `component`, if it has one.
+        /// Removes `entity`'s `component`, if present.
         ///
         /// # Args
-        /// - `entity`: the entity that loses the component.
-        /// - `component`: the component to remove; must be known at compile time.
-        ///
-        /// # Return
-        /// Nothing; removing a component the entity does not own is a no-op.
+        /// - `entity`: the entity that loses the
+        ///   component.
+        /// - `component`: the component to remove; must
+        ///   be known at compile time.
         ///
         /// # Note
-        /// Only the logical component bit is cleared, so the call never
-        /// allocates, never fails and never moves the entity. Iteration filters
-        /// rows through the logical mask, so a component that was removed is no
-        /// longer observable. Use `has` to test presence, or `get` to read the
-        /// payload before removing it.
+        /// Only the logical bit is cleared, so the call
+        /// never allocates, never fails, and never moves
+        /// the entity. The row is dropped only when the
+        /// entity loses its last logical component.
+        ///
+        /// Iteration filters rows by the logical mask, so
+        /// a removed component is no longer observable;
+        /// use `has` to test presence.
         ///
         /// # Compile Error
         /// `component` is not a field of `Meta`.
-        ///
-        /// See `register`, `has`, `get`, `iterator`.
         pub fn unregister(
             self: *Self,
             entity: Entity,
@@ -438,29 +454,30 @@ pub fn Archtype(comptime Entity: type, comptime Meta: type) type {
             _ = self.entities.remove(entity);
         }
 
-        /// Stores `value` for `entity`'s `component`, returning the old payload.
+        /// Stores `value` for `entity`'s `component` and
+        /// returns the previous payload.
         ///
         /// # Args
-        /// - `entity`: the entity whose payload is swapped.
-        /// - `component`: the component to update; must be known at compile time.
+        /// - `entity`: the entity whose payload is
+        ///   swapped.
+        /// - `component`: the component to update; must
+        ///   be known at compile time.
         /// - `value`: the new payload, stored by copy.
         ///
         /// # Return
-        /// The previous payload, or `null` when `entity` does not own
-        /// `component` (nothing is written in that case).
+        /// The previous payload, or `null` when
+        /// `entity` does not own `component`; nothing is
+        /// written in that case.
         ///
         /// # Note
-        /// `replace` only updates an existing payload, so it never allocates and
-        /// never fails; use `register` if inserting a missing component is
-        /// acceptable. The `null` return does not distinguish "absent" from a
-        /// payload value, but payloads are non-optional here, so use `has` when
-        /// only presence matters.
+        /// Only an existing payload is updated, so
+        /// `replace` never allocates and never fails.
+        /// Use `register` to insert a missing component.
         ///
         /// # Compile Error
         /// - `component` is not a field of `Meta`.
-        /// - `value` does not match `TypeOf(component)`.
-        ///
-        /// See `register`, `get`, `has`.
+        /// - `value` does not match
+        ///   `TypeOf(component)`.
         pub fn replace(
             self: *Self,
             entity: Entity,
@@ -490,23 +507,22 @@ pub fn Archtype(comptime Entity: type, comptime Meta: type) type {
         ///
         /// # Args
         /// - `entity`: the entity to look up.
-        /// - `component`: the component to read; must be known at compile time.
+        /// - `component`: the component to read; must
+        ///   be known at compile time.
         ///
         /// # Return
-        /// A copy of the stored payload, or `null` when `entity` does not own
-        /// `component`.
+        /// A copy of the stored payload, or `null` when
+        /// `entity` does not own `component`.
         ///
         /// # Note
-        /// A `null` result means "this entity does not have this component"; use
-        /// `has` when only presence matters, because that avoids copying the
-        /// payload. The returned value is a copy, so writing to it does not
-        /// change the stored data; use `iterator` (which yields pointers) or
-        /// `replace` to modify a component.
+        /// The returned value is a copy, so writing to
+        /// it does not change the stored data. Use
+        /// `has` for a presence check, `replace` to
+        /// update in place, or `iterator` to get
+        /// pointers.
         ///
         /// # Compile Error
         /// `component` is not a field of `Meta`.
-        ///
-        /// See `has`, `replace`, `iterator`.
         pub fn get(
             self: *Self,
             entity: Entity,
@@ -528,56 +544,60 @@ pub fn Archtype(comptime Entity: type, comptime Meta: type) type {
             unreachable;
         }
 
-        /// Tests whether `entity` currently owns `component`.
+        /// Tests whether `entity` owns `component`.
         ///
         /// # Args
         /// - `entity`: the entity to test.
-        /// - `component`: the component to test for; must be known at compile
-        ///   time.
+        /// - `component`: the component to test for;
+        ///   must be known at compile time.
         ///
         /// # Return
-        /// `true` when the component is logically present for `entity`,
-        /// otherwise `false`.
+        /// `true` when the component is logically
+        /// present for `entity`, otherwise `false`.
         ///
         /// # Note
-        /// Prefer this over `get(...) != null` for pure existence checks: nothing
+        /// Prefer this over `get(...) != null`: nothing
         /// is copied and nothing is allocated.
         ///
         /// # Compile Error
         /// `component` is not a field of `Meta`.
-        ///
-        /// See `get`, `register`, `unregister`.
         pub fn has(self: *Self, entity: Entity, comptime component: Component) bool {
             const bit = comptime bitOf(component);
             const record = self.entities.get(entity) orelse return false;
             return record.logical & bit != 0;
         }
 
-        /// Iterates the entities that own every requested component. The returned
-        /// iterator borrows the value: it must outlive it and it must not be
-        /// mutated through `register`, `unregister` or `deinit` until the loop
-        /// ends, otherwise the yielded pointers and the cursor become invalid.
+        /// Iterates the entities that own every requested
+        /// component.
         ///
         /// # Args
-        /// - `components`: the components an entity must own to be yielded; must
-        ///   be known at compile time. The iterator scans the archetypes that
-        ///   physically contain all of them and filters rows by the logical mask.
+        /// - `components`: the components an entity must
+        ///   own to be yielded; must be known at compile
+        ///   time. The iterator scans the archetypes that
+        ///   physically contain all of them and filters
+        ///   rows by the logical mask.
         ///
         /// # Return
-        /// An `Iterator(components)`; each `next` call yields
-        /// `.{ entity, Item(components) }` while the iterator is not exhausted.
+        /// An `Iterator(components)`; each `next` call
+        /// yields `.{ entity, Item(components) }` until
+        /// it returns `null`.
         ///
         /// # Note
-        /// Yield order follows archetype order and the packed rows inside each
-        /// archetype; the order is not specified. Entities that miss any
-        /// requested component are skipped, so the loop visits a subset rather
+        /// The iterator borrows the value, which must
+        /// outlive it and must not be mutated through
+        /// `register`, `unregister`, or `deinit` until
+        /// the loop ends, otherwise the yielded pointers
+        /// become invalid.
+        ///
+        /// Yield order follows archetype order and packed
+        /// rows inside each archetype; it is unspecified.
+        /// Entities missing a requested component are
+        /// skipped, so the loop visits a subset rather
         /// than stopping early.
         ///
         /// # Compile Error
         /// - `components` is empty.
         /// - `components` repeats a component name.
-        ///
-        /// See `Iterator`, `Item`, `get`, `has`.
         pub fn iterator(self: *Self, comptime components: []const Component) Iterator(components) {
             comptime validateComponents(components);
             return .{
@@ -587,30 +607,28 @@ pub fn Archtype(comptime Entity: type, comptime Meta: type) type {
             };
         }
 
-        /// Builds the item type yielded by `Iterator(components)`. Its fields are
-        /// pointers into the archetype columns of the iterated value, so they
-        /// stay valid only until that value is mutated.
+        /// Builds the item type yielded by
+        /// `Iterator(components)`.
         ///
         /// # Args
-        /// - `components`: the components to expose; must be known at compile
-        ///   time.
+        /// - `components`: the components to expose; must
+        ///   be known at compile time.
         ///
         /// # Return
-        /// A struct type with one mutable pointer field per requested component,
-        /// e.g. `Item(&.{.pos, .vel})` has fields `pos: *Pos` and `vel: *Vel`.
+        /// A struct type with one mutable pointer field
+        /// per requested component, e.g.
+        /// `Item(&.{.pos, .vel})` has `pos: *Pos` and
+        /// `vel: *Vel`.
         ///
         /// # Note
-        /// The fields are ordered like the declaration order of `Meta`, not like
-        /// the order given in `components`, so `Item(&.{.vel, .pos})` still
-        /// declares `pos` before `vel`; access the fields by name instead of
-        /// relying on order. Items are returned inside a tuple, so `item[1]` is
-        /// the `Item` and `item[0]` is the entity.
+        /// Fields follow the declaration order of `Meta`,
+        /// not the order in `components`, so access them
+        /// by name. Fields are pointers into the `columns`
+        /// and stay valid only until the value is mutated.
         ///
         /// # Compile Error
         /// - `components` is empty.
         /// - `components` repeats a component name.
-        ///
-        /// See `Iterator`, `iterator`.
         pub fn Item(comptime components: []const Component) type {
             comptime validateComponents(components);
             const meta_info = structInfo(Meta);
@@ -639,51 +657,58 @@ pub fn Archtype(comptime Entity: type, comptime Meta: type) type {
             );
         }
 
-        /// The iterator type returned by `iterator`. It keeps a pointer to the
-        /// value it scans plus a cursor into the archetype list and the packed
-        /// rows of the current archetype, so the value must outlive the iterator
-        /// and must not be mutated (or `deinit`-ed) until the iteration ends.
+        /// The iterator type returned by `iterator`.
         ///
         /// # Args
-        /// - `components`: the components every yielded item owns; must be known
-        ///   at compile time.
+        /// - `components`: the components every yielded
+        ///   item owns; must be known at compile time.
         ///
         /// # Note
-        /// Obtain it through `iterator`; the type is public so it can be named in
-        /// function signatures and stored where the borrow rules allow.
+        /// It holds a pointer to the value plus cursors
+        /// into the archetype list and packed rows, so
+        /// the value must outlive the iterator and must
+        /// not be mutated or deinitialized until the
+        /// iteration ends.
+        ///
+        /// Obtain it through `iterator`; the type is
+        /// public so it can be named in signatures.
         ///
         /// # Compile Error
         /// - `components` is empty.
         /// - `components` repeats a component name.
-        ///
-        /// See `iterator`, `Item`.
         pub fn Iterator(comptime components: []const Component) type {
             comptime validateComponents(components);
             return struct {
                 const masks = candidateMasks(components);
                 const required = requiredBits(components);
 
+                /// The `Archtype` being iterated.
                 ref: *Self,
+                /// Cursor into the archetype list.
                 archetype: usize,
+                /// Cursor into the current
+                /// archetype's rows.
                 row: usize,
 
-                /// Advances to the next entity that owns every requested component.
-                /// The data returned by a call aliases the archetype columns it was
-                /// taken from, so it stays valid only until the next mutation of the
-                /// iterated value; edit payloads through the yielded pointers
-                /// instead of calling `register` again.
+                /// Advances to the next entity that owns
+                /// every requested component.
                 ///
                 /// # Return
-                /// `.{ entity, item }` where `item` is an `Item(components)` holding
-                /// mutable pointers to the payloads, or `null` when the iterator is
-                /// exhausted.
+                /// `.{ entity, item }`, where `item` is
+                /// an `Item(components)` holding mutable
+                /// pointers to the payloads, or `null`
+                /// when the iterator is exhausted.
                 ///
                 /// # Note
-                /// Entities missing at least one requested component are skipped
-                /// rather than truncating the iteration, so `null` always means
-                /// "no more matching entities".
+                /// The returned data aliases the archetype
+                /// columns it was taken from, so it stays
+                /// valid only until the value is mutated;
+                /// edit payloads through the pointers
+                /// instead of calling `register` again.
                 ///
-                /// See `iterator`, `Item`, `get`.
+                /// Entities missing a requested component
+                /// are skipped, so `null` always means "no
+                /// more matching entities".
                 pub fn next(self: *Iterator(components)) ?struct { Entity, Item(components) } {
                     scan: while (self.archetype < masks.len) {
                         const physical = masks[self.archetype];
@@ -716,7 +741,8 @@ pub fn Archtype(comptime Entity: type, comptime Meta: type) type {
             };
         }
 
-        /// Fails compilation when `components` cannot drive an iteration.
+        /// Rejects a `components` list that cannot
+        /// drive an iteration.
         fn validateComponents(comptime components: []const Component) void {
             if (components.len == 0) {
                 @compileError("Archtype: `components` must contain at least one component, " ++
@@ -738,7 +764,8 @@ pub fn Archtype(comptime Entity: type, comptime Meta: type) type {
             return @as(usize, 1) << @backingInt(component);
         }
 
-        /// Returns the union of the mask bits of `components`.
+        /// Returns the union of the mask bits of
+        /// `components`.
         fn requiredBits(comptime components: []const Component) usize {
             var bits: usize = 0;
             for (components) |component| {
@@ -747,7 +774,8 @@ pub fn Archtype(comptime Entity: type, comptime Meta: type) type {
             return bits;
         }
 
-        /// Returns how many archetypes contain every requested component.
+        /// Counts the archetypes that contain every
+        /// requested component.
         fn candidateCount(comptime components: []const Component) usize {
             const required = requiredBits(components);
             var count: usize = 0;
@@ -757,8 +785,9 @@ pub fn Archtype(comptime Entity: type, comptime Meta: type) type {
             return count;
         }
 
-        /// Returns the masks of the archetypes that contain every requested
-        /// component, in ascending order.
+        /// Returns the masks of the archetypes that
+        /// contain every requested component, in
+        /// ascending order.
         fn candidateMasks(comptime components: []const Component) [candidateCount(components)]usize {
             const required = requiredBits(components);
             var masks: [candidateCount(components)]usize = undefined;
@@ -772,7 +801,8 @@ pub fn Archtype(comptime Entity: type, comptime Meta: type) type {
             return masks;
         }
 
-        /// Returns the storage of the archetype encoded by `mask`.
+        /// Returns the storage type of the archetype
+        /// encoded by `mask`.
         fn Store(comptime mask: usize) type {
             return ArchetypeStore(Entity, Meta, mask);
         }
@@ -781,8 +811,9 @@ pub fn Archtype(comptime Entity: type, comptime Meta: type) type {
             return &@field(self.data, @typeInfo(Data).@"struct".field_names[mask - 1]);
         }
 
-        /// Creates the row of a new entity in the archetype that only contains
-        /// the freshly registered component.
+        /// Creates the row of a new entity in the
+        /// archetype that only contains the freshly
+        /// registered component.
         fn insertFresh(
             self: *Self,
             entity: Entity,
@@ -813,9 +844,10 @@ pub fn Archtype(comptime Entity: type, comptime Meta: type) type {
             });
         }
 
-        /// Moves an entity from `old_mask` to `new_mask`, carrying every
-        /// physically stored column over and writing `value` into the newly
-        /// added component.
+        /// Moves an entity from `old_mask` to
+        /// `new_mask`, carrying every physically stored
+        /// column over and writing `value` into the
+        /// newly added component.
         fn moveRow(
             self: *Self,
             comptime old_mask: usize,
