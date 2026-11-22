@@ -38,8 +38,7 @@ const std = @import("std");
 
 pub const Device = @import("Device.zig");
 pub const Queue = @import("Queue.zig");
-
-const Resource = @import("Resource.zig");
+pub const Resource = @import("Resource.zig");
 
 test {
     _ = Device;
@@ -243,6 +242,10 @@ test "public descriptions and operations type-check" {
     const ops = [_]Device.DeviceOp{
         .wait_idle,
         .{ .acquire = .{ .swapchain = swapchain } },
+        .{ .swapchain_image = .{
+            .swapchain = swapchain,
+            .index = 0,
+        } },
         .{ .reset_command_pool = command_pool },
         .{ .reset_command_buffer = command_buffer },
         .{ .reset_fence = fence },

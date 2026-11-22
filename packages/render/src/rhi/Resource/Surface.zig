@@ -13,25 +13,28 @@ const std = @import("std");
 pub const Desc = struct {
     /// Debug name reported by validation.
     label: []const u8 = "",
-    /// Raw native handle; ignored by `headless`.
+    /// Native display connection; platform-specific.
+    display: usize = 0,
+    /// Raw native window handle; ignored by
+    /// `headless`.
     window: usize,
-    /// Platform API that owns `window`.
+    /// Platform API that owns the handles.
     platform: Platform,
 };
 
 /// Platform APIs accepted by `Surface.Desc`.
 pub const Platform = enum {
-    /// A Win32 `HWND`.
+    /// A Win32 `HINSTANCE` and `HWND`.
     win32,
-    /// An Xlib `Window`.
+    /// An Xlib `Display*` and `Window`.
     xlib,
-    /// An XCB `xcb_window_t`.
+    /// An XCB connection and `xcb_window_t`.
     xcb,
-    /// A Wayland `wl_surface`.
+    /// A Wayland `wl_display*` and `wl_surface*`.
     wayland,
-    /// A Metal `CAMetalLayer`.
+    /// A Metal `CAMetalLayer*`; `display` is unused.
     metal,
-    /// An Android `ANativeWindow`.
+    /// An Android `ANativeWindow*`; `display` is unused.
     android,
     /// No window; presentation is unsupported.
     headless,
@@ -51,9 +54,9 @@ device: Device,
 /// A live surface; release it with `destroy`.
 ///
 /// # Error
-/// - `error.InvalidDesc`: `window` is zero on a
-///   non-headless platform, or it does not belong to
-///   `platform`.
+/// - `error.InvalidDesc`: `window` is zero, `display` is
+///   zero for a platform that needs it, or a handle does
+///   not belong to `platform`.
 /// - `error.TooManyObjects`: the backend cannot track
 ///   another surface.
 /// - `error.Unsupport`: the backend cannot create

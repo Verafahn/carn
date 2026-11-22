@@ -884,6 +884,11 @@ pub const DeviceOp = union(enum) {
     ///
     /// `out` receives the image index as a `u32`.
     acquire: Acquire,
+    /// Returns the texture that wraps a swapchain image.
+    ///
+    /// The texture is owned by the swapchain and must
+    /// not be destroyed. `out` receives a `Resource`.
+    swapchain_image: SwapchainImage,
     /// Resets a pool and every buffer allocated from it.
     ///
     /// The pool must have no pending work.
@@ -920,6 +925,14 @@ pub const DescriptorWrite = struct {
     set: DescriptorSet,
     /// Writes applied in order.
     writes: []const DescriptorSet.Write,
+};
+
+/// Parameters of `DeviceOp.swapchain_image`.
+pub const SwapchainImage = struct {
+    /// Swapchain that owns the image.
+    swapchain: Swapchain,
+    /// Image index in `0..image_count`.
+    index: u32,
 };
 
 /// Backend state; interpreted only by `vtable`.
@@ -1161,7 +1174,8 @@ pub const VTable = struct {
     ///
     /// # Note
     /// For `acquire`, `out` receives the image index
-    /// as a `u32`.
+    /// as a `u32`; for `swapchain_image`, `out`
+    /// receives a `Resource`.
     device_op: *const fn (
         *anyopaque,
         op: DeviceOp,
@@ -1411,7 +1425,8 @@ pub inline fn rawGetQueue(
 ///
 /// # Note
 /// For `acquire`, `out` receives the image index as a
-/// `u32`.
+/// `u32`; for `swapchain_image`, `out` receives a
+/// `Resource`.
 pub inline fn rawDeviceOp(
     self: Device,
     op: DeviceOp,
@@ -1422,6 +1437,9 @@ pub inline fn rawDeviceOp(
 }
 
 /// Blocks until all submitted work completes.
+///
+/// # Args
+/// - `ret_addr`: address of the public call site.
 ///
 /// # Error
 /// - `error.OutOfMemory`: host bookkeeping fails.

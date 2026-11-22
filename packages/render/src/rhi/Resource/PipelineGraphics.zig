@@ -32,6 +32,9 @@ pub const Desc = struct {
     depth_stencil: ?DepthStencil = null,
     /// Color attachment state.
     color: Color = .{},
+    /// Depth-stencil attachment format; null disables
+    /// the depth-stencil attachment.
+    depth_format: ?Resource.Format = null,
     /// Samples per pixel of the render pass.
     samples: Texture.SampleCount = .x1,
     /// Writes alpha coverage to the color target.

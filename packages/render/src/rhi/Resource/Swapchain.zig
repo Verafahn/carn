@@ -148,3 +148,47 @@ pub fn acquire(
     );
     return index;
 }
+
+/// Returns the texture that wraps image `index`.
+///
+/// # Args
+/// - `index`: image index in `0..image_count`.
+///
+/// # Return
+/// A texture owned by the swapchain. It stays valid
+/// until the swapchain is destroyed.
+///
+/// # Error
+/// - `error.InvalidResource`: the handle is not live.
+/// - `error.IndexOutOfBounds`: `index` is not an image
+///   of the swapchain.
+/// - `error.OutOfMemory`: host bookkeeping fails.
+/// - `error.DeviceLost`, `error.DeviceFailure`: the
+///   device is no longer usable.
+///
+/// # Note
+/// Do not destroy the returned texture. The image must
+/// be acquired before it is rendered into.
+///
+/// # Panic
+/// In safety builds, the handle kind is not
+/// `swapchain`.
+pub fn image(
+    self: Swapchain,
+    index: u32,
+) Device.DeviceOpError!Texture {
+    std.debug.assert(self.handle.kind == .swapchain);
+    var handle: Resource = undefined;
+    try self.device.rawDeviceOp(
+        .{ .swapchain_image = .{
+            .swapchain = self,
+            .index = index,
+        } },
+        std.mem.asBytes(&handle),
+        @returnAddress(),
+    );
+    return .{
+        .handle = handle,
+        .device = self.device,
+    };
+}
