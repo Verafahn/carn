@@ -15,7 +15,9 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
-            .{ .name = "rhi", .module = render.module("rhi") },
+            .{ .name = "render/rhi", .module = render.module("rhi") },
+            .{ .name = "render/null", .module = render.module("null") },
+            .{ .name = "render/vulkan", .module = render.module("vulkan") },
         },
     });
 
