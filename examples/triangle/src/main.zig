@@ -7,7 +7,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const carn = @import("carn");
-const shaders = @import("shaders");
 const glfw = @import("glfw");
 
 const rhi = carn.render.rhi;
@@ -143,13 +142,13 @@ const Triangle = struct {
 
         const vertex_shader = try rhi.Resource.Shader.create(device, .{
             .label = "triangle vertex",
-            .code = shaders.vertex,
+            .code = @embedFile("vertex"),
             .stage = .vertex,
         });
         errdefer vertex_shader.destroy();
         const fragment_shader = try rhi.Resource.Shader.create(device, .{
             .label = "triangle fragment",
-            .code = shaders.fragment,
+            .code = @embedFile("fragment"),
             .stage = .fragment,
         });
         errdefer fragment_shader.destroy();

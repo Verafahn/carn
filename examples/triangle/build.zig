@@ -72,16 +72,6 @@ pub fn build(b: *std.Build) !void {
         .use_llvm = false,
     });
 
-    // Bundle the compiled shaders so the executable can embed them.
-    const generated = b.addWriteFiles();
-    _ = generated.addCopyFile(vertex.getEmittedBin(), "vertex.spv");
-    _ = generated.addCopyFile(fragment.getEmittedBin(), "fragment.spv");
-    const shaders = generated.add("shaders.zig",
-        \\pub const vertex = @embedFile("vertex.spv");
-        \\pub const fragment = @embedFile("fragment.spv");
-        \\
-    );
-
     const exe_module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -92,11 +82,12 @@ pub fn build(b: *std.Build) !void {
             .{ .name = "glfw", .module = glfw_bindings.mod },
         },
     });
-    exe_module.addImport("shaders", b.createModule(.{
-        .root_source_file = shaders,
-        .target = target,
-        .optimize = optimize,
-    }));
+    exe_module.addAnonymousImport("vertex", .{
+        .root_source_file = vertex.getEmittedBin(),
+    });
+    exe_module.addAnonymousImport("fragment", .{
+        .root_source_file = fragment.getEmittedBin(),
+    });
 
     const exe = b.addExecutable(.{
         .name = "triangle",
