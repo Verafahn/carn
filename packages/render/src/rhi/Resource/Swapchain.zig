@@ -49,6 +49,33 @@ pub const PresentMode = enum {
 handle: Resource,
 device: Device,
 
+/// Creates a swapchain and attributes diagnostics to
+/// `ret_addr`.
+///
+/// # Args
+/// - `device`: the device that owns the swapchain.
+/// - `desc`: surface, format and presentation
+///   policy.
+/// - `ret_addr`: address of the public call site.
+///
+/// # Return
+/// A live swapchain; release it with `destroy`.
+///
+/// # Error
+/// The error contract matches `create`.
+pub fn createWithAddr(
+    device: Device,
+    desc: Desc,
+    ret_addr: usize,
+) Device.CreateError!Swapchain {
+    const rc_desc: Resource.Desc = .{ .swapchain = desc };
+    const handle = try device.rawCreate(&rc_desc, ret_addr);
+    return .{
+        .handle = handle,
+        .device = device,
+    };
+}
+
 /// Creates a swapchain on `device`.
 ///
 /// # Args
@@ -72,12 +99,24 @@ device: Device,
 /// - `error.DeviceLost`, `error.DeviceFailure`: the
 ///   device is no longer usable.
 pub fn create(device: Device, desc: Desc) Device.CreateError!Swapchain {
-    const rc_desc: Resource.Desc = .{ .swapchain = desc };
-    const handle = try device.rawCreate(&rc_desc, @returnAddress());
-    return .{
-        .handle = handle,
-        .device = device,
-    };
+    return createWithAddr(device, desc, @returnAddress());
+}
+
+/// Destroys the swapchain and attributes diagnostics
+/// to `ret_addr`.
+///
+/// # Args
+/// - `ret_addr`: address of the public call site.
+///
+/// # Note
+/// The lifetime contract matches `destroy`.
+///
+/// # Panic
+/// In safety builds, the handle kind is not
+/// `swapchain`.
+pub fn destroyWithAddr(self: Swapchain, ret_addr: usize) void {
+    std.debug.assert(self.handle.kind == .swapchain);
+    self.device.rawDestroy(self.handle, ret_addr);
 }
 
 /// Destroys the swapchain and its images.
@@ -91,8 +130,50 @@ pub fn create(device: Device, desc: Desc) Device.CreateError!Swapchain {
 /// In safety builds, the handle kind is not
 /// `swapchain`.
 pub fn destroy(self: Swapchain) void {
+    self.destroyWithAddr(@returnAddress());
+}
+
+/// Acquires the next image and attributes
+/// diagnostics to `ret_addr`.
+///
+/// # Args
+/// - `signal`: semaphore signalled when the image is
+///   available; null signals nothing.
+/// - `fence`: fence signalled when the image is
+///   available; null signals nothing.
+/// - `timeout_ns`: nanosecond timeout; null waits
+///   forever.
+/// - `ret_addr`: address of the public call site.
+///
+/// # Return
+/// The index of the acquired image.
+///
+/// # Error
+/// The error contract matches `acquire`.
+///
+/// # Panic
+/// In safety builds, the handle kind is not
+/// `swapchain`.
+pub fn acquireWithAddr(
+    self: Swapchain,
+    signal: ?Semaphore,
+    fence: ?Fence,
+    timeout_ns: ?u64,
+    ret_addr: usize,
+) Device.DeviceOpError!u32 {
     std.debug.assert(self.handle.kind == .swapchain);
-    self.device.rawDestroy(self.handle, @returnAddress());
+    var index: u32 = undefined;
+    try self.device.rawDeviceOp(
+        .{ .acquire = .{
+            .swapchain = self,
+            .signal = signal,
+            .fence = fence,
+            .timeout_ns = timeout_ns,
+        } },
+        std.mem.asBytes(&index),
+        ret_addr,
+    );
+    return index;
 }
 
 /// Acquires the next image for rendering.
@@ -134,19 +215,49 @@ pub fn acquire(
     fence: ?Fence,
     timeout_ns: ?u64,
 ) Device.DeviceOpError!u32 {
-    std.debug.assert(self.handle.kind == .swapchain);
-    var index: u32 = undefined;
-    try self.device.rawDeviceOp(
-        .{ .acquire = .{
-            .swapchain = self,
-            .signal = signal,
-            .fence = fence,
-            .timeout_ns = timeout_ns,
-        } },
-        std.mem.asBytes(&index),
+    return self.acquireWithAddr(
+        signal,
+        fence,
+        timeout_ns,
         @returnAddress(),
     );
-    return index;
+}
+
+/// Returns image `index` and attributes diagnostics
+/// to `ret_addr`.
+///
+/// # Args
+/// - `index`: image index in `0..image_count`.
+/// - `ret_addr`: address of the public call site.
+///
+/// # Return
+/// A texture owned by the swapchain.
+///
+/// # Error
+/// The error contract matches `image`.
+///
+/// # Panic
+/// In safety builds, the handle kind is not
+/// `swapchain`.
+pub fn imageWithAddr(
+    self: Swapchain,
+    index: u32,
+    ret_addr: usize,
+) Device.DeviceOpError!Texture {
+    std.debug.assert(self.handle.kind == .swapchain);
+    var handle: Resource = undefined;
+    try self.device.rawDeviceOp(
+        .{ .swapchain_image = .{
+            .swapchain = self,
+            .index = index,
+        } },
+        std.mem.asBytes(&handle),
+        ret_addr,
+    );
+    return .{
+        .handle = handle,
+        .device = self.device,
+    };
 }
 
 /// Returns the texture that wraps image `index`.
@@ -177,18 +288,5 @@ pub fn image(
     self: Swapchain,
     index: u32,
 ) Device.DeviceOpError!Texture {
-    std.debug.assert(self.handle.kind == .swapchain);
-    var handle: Resource = undefined;
-    try self.device.rawDeviceOp(
-        .{ .swapchain_image = .{
-            .swapchain = self,
-            .index = index,
-        } },
-        std.mem.asBytes(&handle),
-        @returnAddress(),
-    );
-    return .{
-        .handle = handle,
-        .device = self.device,
-    };
+    return self.imageWithAddr(index, @returnAddress());
 }

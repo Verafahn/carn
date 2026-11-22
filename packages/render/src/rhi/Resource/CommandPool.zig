@@ -23,6 +23,32 @@ pub const Desc = struct {
 handle: Resource,
 device: Device,
 
+/// Creates a command pool and attributes diagnostics
+/// to `ret_addr`.
+///
+/// # Args
+/// - `device`: the device that owns the pool.
+/// - `desc`: queue family and reset policy.
+/// - `ret_addr`: address of the public call site.
+///
+/// # Return
+/// A live pool; release it with `destroy`.
+///
+/// # Error
+/// The error contract matches `create`.
+pub fn createWithAddr(
+    device: Device,
+    desc: Desc,
+    ret_addr: usize,
+) Device.CreateError!CommandPool {
+    const rc_desc: Resource.Desc = .{ .command_pool = desc };
+    const handle = try device.rawCreate(&rc_desc, ret_addr);
+    return .{
+        .handle = handle,
+        .device = device,
+    };
+}
+
 /// Creates a command pool on `device`.
 ///
 /// # Args
@@ -43,12 +69,24 @@ device: Device,
 /// - `error.DeviceLost`, `error.DeviceFailure`: the
 ///   device is no longer usable.
 pub fn create(device: Device, desc: Desc) Device.CreateError!CommandPool {
-    const rc_desc: Resource.Desc = .{ .command_pool = desc };
-    const handle = try device.rawCreate(&rc_desc, @returnAddress());
-    return .{
-        .handle = handle,
-        .device = device,
-    };
+    return createWithAddr(device, desc, @returnAddress());
+}
+
+/// Destroys the pool and attributes diagnostics to
+/// `ret_addr`.
+///
+/// # Args
+/// - `ret_addr`: address of the public call site.
+///
+/// # Note
+/// The lifetime contract matches `destroy`.
+///
+/// # Panic
+/// In safety builds, the handle kind is not
+/// `command_pool`.
+pub fn destroyWithAddr(self: CommandPool, ret_addr: usize) void {
+    std.debug.assert(self.handle.kind == .command_pool);
+    self.device.rawDestroy(self.handle, ret_addr);
 }
 
 /// Destroys the pool and every buffer allocated from it.
@@ -61,8 +99,31 @@ pub fn create(device: Device, desc: Desc) Device.CreateError!CommandPool {
 /// In safety builds, the handle kind is not
 /// `command_pool`.
 pub fn destroy(self: CommandPool) void {
+    self.destroyWithAddr(@returnAddress());
+}
+
+/// Resets the pool and attributes diagnostics to
+/// `ret_addr`.
+///
+/// # Args
+/// - `ret_addr`: address of the public call site.
+///
+/// # Error
+/// The error contract matches `reset`.
+///
+/// # Panic
+/// In safety builds, the handle kind is not
+/// `command_pool`.
+pub fn resetWithAddr(
+    self: CommandPool,
+    ret_addr: usize,
+) Device.DeviceOpError!void {
     std.debug.assert(self.handle.kind == .command_pool);
-    self.device.rawDestroy(self.handle, @returnAddress());
+    try self.device.rawDeviceOp(
+        .{ .reset_command_pool = self },
+        null,
+        ret_addr,
+    );
 }
 
 /// Resets the pool and every buffer allocated from it.
@@ -79,10 +140,5 @@ pub fn destroy(self: CommandPool) void {
 /// In safety builds, the handle kind is not
 /// `command_pool`.
 pub fn reset(self: CommandPool) Device.DeviceOpError!void {
-    std.debug.assert(self.handle.kind == .command_pool);
-    try self.device.rawDeviceOp(
-        .{ .reset_command_pool = self },
-        null,
-        @returnAddress(),
-    );
+    try self.resetWithAddr(@returnAddress());
 }

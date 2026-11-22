@@ -118,6 +118,32 @@ pub const SubresourceRange = struct {
 handle: Resource,
 device: Device,
 
+/// Creates a texture and attributes diagnostics to
+/// `ret_addr`.
+///
+/// # Args
+/// - `device`: the device that owns the texture.
+/// - `desc`: shape, format and usage.
+/// - `ret_addr`: address of the public call site.
+///
+/// # Return
+/// A live texture; release it with `destroy`.
+///
+/// # Error
+/// The error contract matches `create`.
+pub fn createWithAddr(
+    device: Device,
+    desc: Desc,
+    ret_addr: usize,
+) Device.CreateError!Texture {
+    const rc_desc: Resource.Desc = .{ .texture = desc };
+    const handle = try device.rawCreate(&rc_desc, ret_addr);
+    return .{
+        .handle = handle,
+        .device = device,
+    };
+}
+
 /// Creates a texture on `device`.
 ///
 /// # Args
@@ -140,12 +166,23 @@ device: Device,
 /// - `error.DeviceLost`, `error.DeviceFailure`: the
 ///   device is no longer usable.
 pub fn create(device: Device, desc: Desc) Device.CreateError!Texture {
-    const rc_desc: Resource.Desc = .{ .texture = desc };
-    const handle = try device.rawCreate(&rc_desc, @returnAddress());
-    return .{
-        .handle = handle,
-        .device = device,
-    };
+    return createWithAddr(device, desc, @returnAddress());
+}
+
+/// Destroys the texture and attributes diagnostics to
+/// `ret_addr`.
+///
+/// # Args
+/// - `ret_addr`: address of the public call site.
+///
+/// # Note
+/// The lifetime contract matches `destroy`.
+///
+/// # Panic
+/// In safety builds, the handle kind is not `texture`.
+pub fn destroyWithAddr(self: Texture, ret_addr: usize) void {
+    std.debug.assert(self.handle.kind == .texture);
+    self.device.rawDestroy(self.handle, ret_addr);
 }
 
 /// Destroys the texture and releases its device memory.
@@ -158,6 +195,5 @@ pub fn create(device: Device, desc: Desc) Device.CreateError!Texture {
 /// # Panic
 /// In safety builds, the handle kind is not `texture`.
 pub fn destroy(self: Texture) void {
-    std.debug.assert(self.handle.kind == .texture);
-    self.device.rawDestroy(self.handle, @returnAddress());
+    self.destroyWithAddr(@returnAddress());
 }

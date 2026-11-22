@@ -34,6 +34,32 @@ pub const PushConstantRange = struct {
 handle: Resource,
 device: Device,
 
+/// Creates a layout and attributes diagnostics to
+/// `ret_addr`.
+///
+/// # Args
+/// - `device`: the device that owns the layout.
+/// - `desc`: set layouts and push constant windows.
+/// - `ret_addr`: address of the public call site.
+///
+/// # Return
+/// A live layout; release it with `destroy`.
+///
+/// # Error
+/// The error contract matches `create`.
+pub fn createWithAddr(
+    device: Device,
+    desc: Desc,
+    ret_addr: usize,
+) Device.CreateError!PipelineLayout {
+    const rc_desc: Resource.Desc = .{ .pipeline_layout = desc };
+    const handle = try device.rawCreate(&rc_desc, ret_addr);
+    return .{
+        .handle = handle,
+        .device = device,
+    };
+}
+
 /// Creates a pipeline layout on `device`.
 ///
 /// # Args
@@ -56,12 +82,27 @@ device: Device,
 /// - `error.DeviceLost`, `error.DeviceFailure`: the
 ///   device is no longer usable.
 pub fn create(device: Device, desc: Desc) Device.CreateError!PipelineLayout {
-    const rc_desc: Resource.Desc = .{ .pipeline_layout = desc };
-    const handle = try device.rawCreate(&rc_desc, @returnAddress());
-    return .{
-        .handle = handle,
-        .device = device,
-    };
+    return createWithAddr(device, desc, @returnAddress());
+}
+
+/// Destroys the layout and attributes diagnostics to
+/// `ret_addr`.
+///
+/// # Args
+/// - `ret_addr`: address of the public call site.
+///
+/// # Note
+/// The lifetime contract matches `destroy`.
+///
+/// # Panic
+/// In safety builds, the handle kind is not
+/// `pipeline_layout`.
+pub fn destroyWithAddr(
+    self: PipelineLayout,
+    ret_addr: usize,
+) void {
+    std.debug.assert(self.handle.kind == .pipeline_layout);
+    self.device.rawDestroy(self.handle, ret_addr);
 }
 
 /// Destroys the layout.
@@ -74,6 +115,5 @@ pub fn create(device: Device, desc: Desc) Device.CreateError!PipelineLayout {
 /// In safety builds, the handle kind is not
 /// `pipeline_layout`.
 pub fn destroy(self: PipelineLayout) void {
-    std.debug.assert(self.handle.kind == .pipeline_layout);
-    self.device.rawDestroy(self.handle, @returnAddress());
+    self.destroyWithAddr(@returnAddress());
 }

@@ -29,10 +29,21 @@
 //! the backend can attribute diagnostics to the public
 //! call site.
 //!
-//! The `Device.raw*` and `Queue` functions forward to the
-//! backend without validation. The typed wrappers check
-//! handle kinds in safety builds, and a validation layer
-//! owns the full checks.
+//! Public functions follow four forms:
+//!
+//! - `rawX` (or `rawXyz`): a vtable entry taking
+//!   `ret_addr` explicitly, marked `inline`.
+//! - `x`: a vtable entry capturing `@returnAddress`,
+//!   marked `inline`.
+//! - `xWithAddr`: a typed wrapper taking `ret_addr`.
+//! - `x`: a typed wrapper capturing
+//!   `@returnAddress` and forwarding to `xWithAddr`.
+//!
+//! Prefer the forms without `ret_addr`; use the
+//! explicit forms only when forwarding an address from
+//! another wrapper. The typed wrappers check handle
+//! kinds in safety builds, and a validation layer owns
+//! the full checks.
 
 const std = @import("std");
 

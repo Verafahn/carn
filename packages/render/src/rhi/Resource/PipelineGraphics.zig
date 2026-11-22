@@ -335,6 +335,32 @@ pub const BlendOp = enum {
 handle: Resource,
 device: Device,
 
+/// Creates a graphics pipeline and attributes
+/// diagnostics to `ret_addr`.
+///
+/// # Args
+/// - `device`: the device that owns the pipeline.
+/// - `desc`: shaders, layout and fixed state.
+/// - `ret_addr`: address of the public call site.
+///
+/// # Return
+/// A live pipeline; release it with `destroy`.
+///
+/// # Error
+/// The error contract matches `create`.
+pub fn createWithAddr(
+    device: Device,
+    desc: Desc,
+    ret_addr: usize,
+) Device.CreateError!PipelineGraphics {
+    const rc_desc: Resource.Desc = .{ .pipeline_graphics = desc };
+    const handle = try device.rawCreate(&rc_desc, ret_addr);
+    return .{
+        .handle = handle,
+        .device = device,
+    };
+}
+
 /// Creates a graphics pipeline on `device`.
 ///
 /// # Args
@@ -360,12 +386,27 @@ pub fn create(
     device: Device,
     desc: Desc,
 ) Device.CreateError!PipelineGraphics {
-    const rc_desc: Resource.Desc = .{ .pipeline_graphics = desc };
-    const handle = try device.rawCreate(&rc_desc, @returnAddress());
-    return .{
-        .handle = handle,
-        .device = device,
-    };
+    return createWithAddr(device, desc, @returnAddress());
+}
+
+/// Destroys the pipeline and attributes diagnostics
+/// to `ret_addr`.
+///
+/// # Args
+/// - `ret_addr`: address of the public call site.
+///
+/// # Note
+/// The lifetime contract matches `destroy`.
+///
+/// # Panic
+/// In safety builds, the handle kind is not
+/// `pipeline_graphics`.
+pub fn destroyWithAddr(
+    self: PipelineGraphics,
+    ret_addr: usize,
+) void {
+    std.debug.assert(self.handle.kind == .pipeline_graphics);
+    self.device.rawDestroy(self.handle, ret_addr);
 }
 
 /// Destroys the pipeline.
@@ -378,6 +419,5 @@ pub fn create(
 /// In safety builds, the handle kind is not
 /// `pipeline_graphics`.
 pub fn destroy(self: PipelineGraphics) void {
-    std.debug.assert(self.handle.kind == .pipeline_graphics);
-    self.device.rawDestroy(self.handle, @returnAddress());
+    self.destroyWithAddr(@returnAddress());
 }

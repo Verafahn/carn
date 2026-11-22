@@ -7,6 +7,10 @@
 //! Descriptions are borrowed for the duration of a create
 //! call. Every slice inside a description must stay valid
 //! until the backend returns.
+//!
+//! Typed operations come as `x` and `xWithAddr`; the
+//! latter takes an explicit call-site address. Prefer
+//! `x`, which captures `@returnAddress`.
 
 pub const Buffer = @import("Resource/Buffer.zig");
 pub const CommandBuffer = @import("Resource/CommandBuffer.zig");

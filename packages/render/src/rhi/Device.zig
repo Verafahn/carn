@@ -1,8 +1,8 @@
 //! The backend-independent device.
 //!
 //! A `Device` is an opaque backend pointer plus a
-//! vtable. Resources are created through `rawCreate` and
-//! destroyed through `rawDestroy`; the typed wrappers in
+//! vtable. Resources are created through `create` and
+//! destroyed through `destroy`; the typed wrappers in
 //! `Resource` call those functions.
 //!
 //! Work reaches the GPU through four closed operation
@@ -19,11 +19,17 @@
 //! approximating it. Adding an operation is a breaking
 //! interface change.
 //!
-//! The `raw*` functions do not validate arguments. The
-//! typed wrappers check handle kinds in safety builds,
-//! and a validation layer owns the full checks. Backends
-//! receive `ret_addr` so diagnostics point at the call
-//! site.
+//! Functions follow four layers: `raw*` forwards to a
+//! vtable entry with an explicit `ret_addr`; the same
+//! name without `raw` captures `@returnAddress`;
+//! `*WithAddr` is the typed wrapper taking `ret_addr`;
+//! and the same name without the suffix forwards to it.
+//! Prefer the forms without `ret_addr`.
+//!
+//! The wrappers do not validate arguments beyond kind
+//! checks in safety builds; a validation layer owns the
+//! full checks. Backends receive `ret_addr` so
+//! diagnostics point at the public call site.
 
 const std = @import("std");
 const Resource = @import("Resource.zig");
@@ -1204,7 +1210,7 @@ pub const VTable = struct {
 ///
 /// # Note
 /// This function does not validate `desc`. Prefer
-/// `Resource.*.create` and the validation layer.
+/// `create` or `Resource.*.create`.
 pub inline fn rawCreate(
     self: Device,
     desc: *const Resource.Desc,
@@ -1221,7 +1227,7 @@ pub inline fn rawCreate(
 ///
 /// # Note
 /// This function does not validate `handle`. Prefer
-/// `Resource.*.destroy`.
+/// `destroy` or `Resource.*.destroy`.
 pub inline fn rawDestroy(
     self: Device,
     handle: Resource,
@@ -1254,7 +1260,7 @@ pub inline fn rawDestroy(
 ///
 /// # Note
 /// This function does not validate `handle`. Prefer
-/// `Buffer.map`.
+/// `map` or `Buffer.map`.
 pub inline fn rawMap(
     self: Device,
     handle: Resource,
@@ -1282,7 +1288,7 @@ pub inline fn rawMap(
 ///
 /// # Note
 /// This function does not validate `handle`. Prefer
-/// `Buffer.unmap`.
+/// `unmap` or `Buffer.unmap`.
 pub inline fn rawUnmap(
     self: Device,
     handle: Resource,
@@ -1309,7 +1315,7 @@ pub inline fn rawUnmap(
 ///
 /// # Note
 /// This function does not validate `handle`. Prefer
-/// `CommandBuffer.record`.
+/// `record` or `CommandBuffer.record`.
 pub inline fn rawRecord(
     self: Device,
     handle: Resource,
@@ -1358,9 +1364,9 @@ pub inline fn rawRecord(
 ///   device is unusable.
 ///
 /// # Note
-/// This function does not validate `handle`. Size
-/// `out` with the `FeatureOut` field that matches
-/// `feature`.
+/// This function does not validate `handle`.
+/// Prefer `query`. Size `out` with the `FeatureOut`
+/// field that matches `feature`.
 pub inline fn rawQuery(
     self: Device,
     feature: Feature,
@@ -1394,8 +1400,11 @@ pub inline fn rawQuery(
 /// - `error.IndexOutOfBounds`: `index` is past the
 ///   queue list.
 /// - `error.OutOfMemory`: host bookkeeping fails.
-/// - `error.DeviceLost`, `error.DeviceFailure`: the
-///   device is unusable.
+/// - `error.DeviceLost`, `error.DeviceFailure`:
+///   the device is unusable.
+///
+/// # Note
+/// Prefer `getQueue`, which captures the call site.
 pub inline fn rawGetQueue(
     self: Device,
     index: u32,
@@ -1424,6 +1433,7 @@ pub inline fn rawGetQueue(
 ///   device is unusable.
 ///
 /// # Note
+/// Prefer `deviceOp`, which captures the call site.
 /// For `acquire`, `out` receives the image index as a
 /// `u32`; for `swapchain_image`, `out` receives a
 /// `Resource`.
@@ -1436,6 +1446,178 @@ pub inline fn rawDeviceOp(
     try self.vtable.device_op(self.vptr, op, out, ret_addr);
 }
 
+/// Creates a resource with a captured call site.
+///
+/// # Args
+/// - `desc`: description passed to the backend.
+///
+/// # Return
+/// The handle created by the backend.
+///
+/// # Error
+/// The error contract matches `rawCreate`.
+///
+/// # Note
+/// Prefer `Resource.*.create`, which checks handles
+/// and returns a typed wrapper.
+pub inline fn create(
+    self: Device,
+    desc: *const Resource.Desc,
+) CreateError!Resource {
+    return try self.rawCreate(desc, @returnAddress());
+}
+
+/// Destroys a resource with a captured call site.
+///
+/// # Args
+/// - `handle`: live handle returned by `create`.
+///
+/// # Note
+/// Prefer `Resource.*.destroy`. The lifetime
+/// contract matches `rawDestroy`.
+pub inline fn destroy(
+    self: Device,
+    handle: Resource,
+) void {
+    self.rawDestroy(handle, @returnAddress());
+}
+
+/// Maps a resource with a captured call site.
+///
+/// # Args
+/// - `handle`: live resource to map.
+/// - `offset`: byte offset of the range.
+/// - `size`: byte length of the range.
+/// - `flags`: requested host access.
+///
+/// # Return
+/// Host memory for the range; valid until
+/// `unmap`.
+///
+/// # Error
+/// The error contract matches `rawMap`.
+///
+/// # Note
+/// Prefer `Buffer.map`.
+pub inline fn map(
+    self: Device,
+    handle: Resource,
+    offset: u64,
+    size: u64,
+    flags: MapFlags,
+) MapError![]u8 {
+    return try self.rawMap(
+        handle,
+        offset,
+        size,
+        flags,
+        @returnAddress(),
+    );
+}
+
+/// Releases a mapping with a captured call site.
+///
+/// # Args
+/// - `handle`: mapped resource.
+/// - `dirty`: ranges written by the host.
+///
+/// # Note
+/// Prefer `Buffer.unmap`.
+pub inline fn unmap(
+    self: Device,
+    handle: Resource,
+    dirty: []const DirtyRange,
+) void {
+    self.rawUnmap(handle, dirty, @returnAddress());
+}
+
+/// Records a command with a captured call site.
+///
+/// # Args
+/// - `handle`: command buffer receiving the
+///   command.
+/// - `cmd`: command to record.
+///
+/// # Error
+/// The error contract matches `rawRecord`.
+///
+/// # Note
+/// Prefer `CommandBuffer.record`.
+pub inline fn record(
+    self: Device,
+    handle: Resource,
+    cmd: *const Command,
+) RecordError!void {
+    try self.rawRecord(handle, cmd, @returnAddress());
+}
+
+/// Queries a feature with a captured call site.
+///
+/// # Args
+/// - `feature`: query to perform.
+/// - `feature_index`: index inside a repeated
+///   result; 0 when the feature has no index.
+/// - `handle`: optional resource the query is
+///   scoped to; null queries the device.
+/// - `out`: optional output buffer; required by
+///   features that produce a value.
+///
+/// # Return
+/// The support verdict.
+///
+/// # Error
+/// The error contract matches `rawQuery`.
+pub inline fn query(
+    self: Device,
+    feature: Feature,
+    feature_index: u32,
+    handle: ?Resource,
+    out: ?[]u8,
+) QueryError!Support {
+    return try self.rawQuery(
+        feature,
+        feature_index,
+        handle,
+        out,
+        @returnAddress(),
+    );
+}
+
+/// Looks up a queue with a captured call site.
+///
+/// # Args
+/// - `index`: position in the flat queue list.
+///
+/// # Return
+/// A queue that identifies its family and index.
+///
+/// # Error
+/// The error contract matches `rawGetQueue`.
+pub inline fn getQueue(
+    self: Device,
+    index: u32,
+) GetQueueError!Queue {
+    return try self.rawGetQueue(index, @returnAddress());
+}
+
+/// Executes an immediate operation with a captured
+/// call site.
+///
+/// # Args
+/// - `op`: operation to execute.
+/// - `out`: optional output buffer for operations
+///   that return a value.
+///
+/// # Error
+/// The error contract matches `rawDeviceOp`.
+pub inline fn deviceOp(
+    self: Device,
+    op: DeviceOp,
+    out: ?[]u8,
+) DeviceOpError!void {
+    try self.rawDeviceOp(op, out, @returnAddress());
+}
+
 /// Blocks until all submitted work completes.
 ///
 /// # Args
@@ -1443,13 +1625,23 @@ pub inline fn rawDeviceOp(
 ///
 /// # Error
 /// - `error.OutOfMemory`: host bookkeeping fails.
-/// - `error.DeviceLost`, `error.DeviceFailure`: the
-///   device is unusable.
-pub inline fn waitIdle(
+/// - `error.DeviceLost`, `error.DeviceFailure`:
+///   the device is unusable.
+pub fn waitIdleWithAddr(
     self: Device,
     ret_addr: usize,
 ) DeviceOpError!void {
     try self.rawDeviceOp(.wait_idle, null, ret_addr);
+}
+
+/// Blocks until all submitted work completes.
+///
+/// # Error
+/// - `error.OutOfMemory`: host bookkeeping fails.
+/// - `error.DeviceLost`, `error.DeviceFailure`:
+///   the device is unusable.
+pub fn waitIdle(self: Device) DeviceOpError!void {
+    try self.waitIdleWithAddr(@returnAddress());
 }
 
 pub const createBuffer = Resource.Buffer.create;
