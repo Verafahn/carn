@@ -44,12 +44,6 @@ jobs:
       - name: Show Zig version
         run: zig version
 
-      - name: Build project
-        run: zig build -Doptimize=${{ matrix.optimize }} --summary all
-
-      - name: Run all tests
-        run: zig build test test-render -Doptimize=${{ matrix.optimize }} --summary all
-
       - name: Install Vulkan SDK + Lavapipe (Windows)
         if: runner.os == 'Windows'
         uses: jakoch/install-vulkan-sdk-action@v1
@@ -59,3 +53,13 @@ jobs:
           cache: true
           stripdown: true
           github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify Vulkan (Lavapipe)
+        if: runner.os == 'Windows'
+        run: vulkaninfo --summary
+
+      - name: Build project
+        run: zig build -Doptimize=${{ matrix.optimize }} --summary all
+
+      - name: Run all tests
+        run: zig build test test-render -Doptimize=${{ matrix.optimize }} --summary all
