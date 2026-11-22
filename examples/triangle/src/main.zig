@@ -293,7 +293,7 @@ const Triangle = struct {
             return;
         }
 
-        self.device.waitIdle(@returnAddress()) catch |err| switch (err) {
+        self.device.waitIdle() catch |err| switch (err) {
             error.DeviceLost, error.DeviceFailure => return err,
             else => {},
         };
@@ -351,7 +351,7 @@ const Triangle = struct {
     }
 
     fn dropSwapchain(self: *Triangle) void {
-        self.device.waitIdle(@returnAddress()) catch {};
+        self.device.waitIdle() catch {};
         if (self.swapchain) |swapchain| {
             swapchain.destroy();
             self.swapchain = null;
@@ -372,7 +372,6 @@ const Triangle = struct {
             &.{.{ .fence = self.in_flight }},
             false,
             frame_timeout_ns,
-            @returnAddress(),
         );
 
         const image_index = swapchain.acquire(
@@ -451,13 +450,12 @@ const Triangle = struct {
             .signals = &signals,
             .fence = self.in_flight,
         }};
-        try self.queue.submit(&submits, @returnAddress());
+        try self.queue.submit(&submits);
 
         const present_result = self.queue.present(
             swapchain,
             image_index,
             &.{.{ .semaphore = self.render_finished }},
-            @returnAddress(),
         ) catch |err| switch (err) {
             error.SwapchainOutOfDate, error.SurfaceLost => return .out_of_date,
             else => return err,
@@ -508,12 +506,11 @@ fn pickSwapchainFormat(
     };
 
     for (candidates) |format| {
-        const support = try device.rawQuery(
+        const support = try device.query(
             .{ .swapchain = .{ .format = format, .mode = .fifo } },
             0,
             surface.handle,
             null,
-            @returnAddress(),
         );
         if (support == .supported) return format;
     }
@@ -524,19 +521,18 @@ fn findGraphicsQueue(device: rhi.Device) !rhi.Queue {
     var index: u32 = 0;
     while (true) : (index += 1) {
         var family: rhi.Device.QueueFamily = undefined;
-        const support = device.rawQuery(
+        const support = device.query(
             .queue_family,
             index,
             null,
             std.mem.asBytes(&family),
-            @returnAddress(),
         ) catch |err| switch (err) {
             error.IndexOutOfBounds => return error.NoGraphicsQueue,
             else => return err,
         };
         if (support != .supported) continue;
         if (!family.kinds.graphics or !family.kinds.present) continue;
-        return device.rawGetQueue(index, @returnAddress());
+        return device.getQueue(index);
     }
 }
 
