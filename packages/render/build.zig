@@ -10,7 +10,7 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
     
-    const null = b.addModule("null", .{
+    const nil = b.addModule("null", .{
         .root_source_file = b.path("src/backend/null/root.zig"),
         .target = target,
         .optimize = optimize,
@@ -30,6 +30,12 @@ pub fn build(b: *std.Build) !void {
 
     const test_render = b.addTest(.{ .root_module = rhi });
     const run_test_render = b.addRunArtifact(test_render);
+    const test_nil = b.addTest(.{.root_module = nil});
+    const test_vulkan = b.addTest(.{.root_module = vulkan});
+    const run_test_nil = b.addRunArtifact(test_nil);
+    const run_test_vulkan = b.addRunArtifact(test_vulkan);
     const test_step = b.step("test", "Test this module.");
     test_step.dependOn(&run_test_render.step);
+    test_step.dependOn(&run_test_nil.step);
+    test_step.dependOn(&run_test_vulkan.step);
 }
