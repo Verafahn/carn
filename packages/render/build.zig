@@ -9,13 +9,13 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
     });
-    
+
     const nil = b.addModule("null", .{
         .root_source_file = b.path("src/backend/null/root.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
-            .{.name = "rhi", .module = rhi},
+            .{ .name = "rhi", .module = rhi },
         },
     });
 
@@ -24,14 +24,14 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
-            .{.name = "rhi", .module = rhi},
+            .{ .name = "rhi", .module = rhi },
         },
     });
 
     const test_render = b.addTest(.{ .root_module = rhi });
     const run_test_render = b.addRunArtifact(test_render);
-    const test_nil = b.addTest(.{.root_module = nil});
-    const test_vulkan = b.addTest(.{.root_module = vulkan});
+    const test_nil = b.addTest(.{ .root_module = nil });
+    const test_vulkan = b.addTest(.{ .root_module = vulkan });
     const run_test_nil = b.addRunArtifact(test_nil);
     const run_test_vulkan = b.addRunArtifact(test_vulkan);
     const test_step = b.step("test", "Test this module.");
