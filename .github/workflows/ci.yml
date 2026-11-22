@@ -54,8 +54,8 @@ jobs:
         if: runner.os == 'Windows'
         uses: jakoch/install-vulkan-sdk-action@v1
         with:
-          install_lavapipe: true          # 核心：安装 Mesa Lavapipe 软件光栅化器
-          install_runtime: true           # 仅安装运行时（Windows 推荐，更轻量）
-          cache: true                     # 启用缓存，加速后续 CI 运行
-          stripdown: true                 # Windows 上精简 SDK 体积，利于缓存
+          install_lavapipe: true
+          install_runtime: true
+          cache: true
+          stripdown: true
           github_token: ${{ secrets.GITHUB_TOKEN }}
