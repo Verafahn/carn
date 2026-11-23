@@ -33,6 +33,6 @@ pub fn build(b: *std.Build) !void {
 
     const test_render = b.step("test-render", "Test submodule 'render'.");
     test_render.dependOn(&render.builder.top_level_steps.get("test").?.step);
-    const test_math = b.step("test-math", "");
-    test_math.dependOn(&render.builder.top_level_steps.get("test").?.step);
+    const test_math = b.step("test-math", "Test submodule 'math'.");
+    test_math.dependOn(&math.builder.top_level_steps.get("test").?.step);
 }

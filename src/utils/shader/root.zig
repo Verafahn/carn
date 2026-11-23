@@ -2,11 +2,19 @@
 //!
 //! Each helper describes one value type `T` once and
 //! exposes matching accessors on the host, in the
-//! shader, or between two stages. `T` must contain only
-//! scalars, vectors, or structs of them.
+//! shader, or between two stages. `T` must contain
+//! scalars, vectors, fixed-size arrays of them, or
+//! structs of them. Matrix types from `math` are
+//! structs of column arrays, so they cross the
+//! boundary unchanged.
 //!
 //! Use plain `struct` types for `T`: `extern struct`
 //! cannot contain vectors on the host.
+//!
+//! An array of three-component vectors does not map
+//! to the shader layout because its elements need
+//! 16-byte alignment; such a field is rejected at
+//! compile time.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -33,8 +41,8 @@ pub const Mode = packed struct {
 /// starting at 0.
 ///
 /// # Args
-/// - `T`: one vertex; a scalar, vector, or struct of
-///   them.
+/// - `T`: one vertex; a scalar, vector, fixed
+///   array, or struct of them.
 ///
 /// # Note
 /// The host creates and owns a host-visible buffer
@@ -43,8 +51,8 @@ pub const Mode = packed struct {
 /// Do not write the same buffer concurrently.
 ///
 /// # Compile Error
-/// - `T` contains a type other than a scalar, vector,
-///   or struct of them.
+/// - `T` contains a type other than a scalar,
+///   vector, fixed array, or struct of them.
 /// - An integer is `isize` or `usize`.
 /// - A struct is a tuple, packed, empty, or has
 ///   `comptime` or explicitly aligned fields.
@@ -166,7 +174,8 @@ pub fn Vertex(comptime T: type) type {
 ///
 /// # Args
 /// - `T`: the uniform block; a non-empty struct of
-///   scalars, vectors, or nested structs.
+///   scalars, vectors, fixed arrays, or nested
+///   structs.
 ///
 /// # Note
 /// The host creates a host-visible buffer and a
@@ -396,6 +405,7 @@ fn validateBoundary(comptime T: type) void {
                 );
             }
         },
+        .array => |info| validateBoundary(info.child),
         .@"struct" => |info| {
             if (info.is_tuple) {
                 @compileError(
@@ -506,6 +516,13 @@ fn typeSize(comptime T: type) usize {
             }
             break :blk comptime alignForward(size, alignment);
         },
+        .array => |info| blk: {
+            const stride = comptime alignForward(
+                typeSize(info.child),
+                typeAlign(info.child),
+            );
+            break :blk info.len * stride;
+        },
         else => unreachable,
     };
 }
@@ -529,6 +546,7 @@ fn typeAlign(comptime T: type) usize {
             }
             break :blk alignment;
         },
+        .array => |info| typeAlign(info.child),
         else => unreachable,
     };
 }
@@ -586,6 +604,16 @@ fn writeValue(
                 );
             }
         },
+        .array => |info| {
+            inline for (0..info.len) |index| {
+                writeValue(
+                    info.child,
+                    dst,
+                    base + index * typeSize(info.child),
+                    value[index],
+                );
+            }
+        },
         else => {
             const host_size = comptime hostValueSize(T);
             const shader_size = comptime typeSize(T);
@@ -619,6 +647,7 @@ fn Mirror(comptime T: type) type {
             }
             break :blk @Struct(.@"extern", null, &names, &types, &attrs);
         },
+        .array => |info| [info.len]Mirror(info.child),
         else => T,
     };
 }
@@ -676,6 +705,15 @@ fn verifyLayout(comptime T: type) void {
                 verifyLayout(FieldTy);
             }
         },
+        .array => |info| {
+            if (@sizeOf(Mirror(T)) != typeSize(T)) {
+                @compileError(
+                    "carn shader: array layout mismatch for `" ++
+                        @typeName(T) ++ "`",
+                );
+            }
+            verifyLayout(info.child);
+        },
         else => {
             if (@sizeOf(T) != typeSize(T)) {
                 @compileError(
@@ -692,6 +730,7 @@ fn validateVertex(comptime T: type) void {
         .@"struct" => |info| {
             inline for (info.field_types) |FieldTy| validateVertex(FieldTy);
         },
+        .array => |info| validateVertex(info.child),
         else => {
             _ = vertexFormat(T);
         },
@@ -779,6 +818,7 @@ fn vertexAttributeCount(comptime T: type) usize {
             }
             break :blk count;
         },
+        .array => |info| info.len * vertexAttributeCount(info.child),
         else => 1,
     };
 }
@@ -807,6 +847,16 @@ fn fillVertexAttributes(
                 fillVertexAttributes(
                     FieldTy,
                     base + fieldOffset(T, name),
+                    dst,
+                    next,
+                );
+            }
+        },
+        .array => |info| {
+            inline for (0..info.len) |index| {
+                fillVertexAttributes(
+                    info.child,
+                    base + index * typeSize(info.child),
                     dst,
                     next,
                 );
@@ -1022,4 +1072,66 @@ test "data stream mode is preserved" {
     try std.testing.expect(@hasDecl(Stream, "write"));
     try std.testing.expect(@hasDecl(Input, "read"));
     try std.testing.expect(@hasDecl(Output, "write"));
+}
+
+test "math matrices forward through the boundary" {
+    const math = @import("math");
+    const null_backend = @import("render/null");
+
+    const Camera = struct {
+        view_projection: math.Mat4(f32),
+        tint: math.Vec4(f32),
+    };
+    const U = Uniform(Camera);
+    try std.testing.expectEqual(@as(usize, 80), U.buffer_size);
+
+    const MeshVertex = struct {
+        transform: math.Mat4(f32),
+        position: math.Vec4(f32),
+    };
+    const layout = Vertex(MeshVertex).vertex_layout;
+    try std.testing.expectEqual(@as(u32, 80), layout.stride);
+    try std.testing.expectEqual(@as(usize, 5), layout.attributes.len);
+    try std.testing.expectEqual(@as(u32, 0), layout.attributes[0].location);
+    try std.testing.expectEqual(@as(u32, 4), layout.attributes[4].location);
+    try std.testing.expectEqual(@as(u32, 64), layout.attributes[4].offset);
+
+    var backend = try null_backend.init(std.testing.allocator, .{});
+    defer {
+        const status = backend.deinit();
+        std.testing.expect(status.ok()) catch @panic("leaked resources");
+    }
+
+    const buffer = try rhi.Resource.Buffer.create(backend.device(), .{
+        .label = "test math uniform",
+        .size = U.buffer_size,
+        .usage = .{ .uniform = true },
+        .memory = .host,
+    });
+    defer buffer.destroy();
+
+    var value: Camera = undefined;
+    @memset(std.mem.asBytes(&value), 0);
+    value.view_projection = math.Mat4(f32).fromRows(.{
+        .{ 1, 2, 3, 4 },
+        .{ 5, 6, 7, 8 },
+        .{ 9, 10, 11, 12 },
+        .{ 13, 14, 15, 16 },
+    });
+    value.tint = .{ 0.25, 0.5, 0.75, 1 };
+    try U.write(value, buffer);
+
+    const bytes = try buffer.map(0, U.buffer_size, .{ .read = true });
+    defer buffer.unmap(&.{});
+
+    try std.testing.expectEqualSlices(
+        u8,
+        std.mem.asBytes(&value.view_projection),
+        bytes[0..@sizeOf(math.Mat4(f32))],
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        std.mem.asBytes(&value.tint),
+        bytes[64..80],
+    );
 }
