@@ -9,6 +9,10 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
         .vulkan = true,
     });
+    const math = b.dependency("math", .{
+        .target = target,
+        .optimize = optimize,
+    });
 
     const carn = b.addModule("carn", .{
         .root_source_file = b.path("src/root.zig"),
@@ -18,6 +22,7 @@ pub fn build(b: *std.Build) !void {
             .{ .name = "render/rhi", .module = render.module("rhi") },
             .{ .name = "render/null", .module = render.module("null") },
             .{ .name = "render/vulkan", .module = render.module("vulkan") },
+            .{ .name = "math", .module = math.module("math") },
         },
     });
 
@@ -28,4 +33,6 @@ pub fn build(b: *std.Build) !void {
 
     const test_render = b.step("test-render", "Test submodule 'render'.");
     test_render.dependOn(&render.builder.top_level_steps.get("test").?.step);
+    const test_math = b.step("test-math", "Test submodule 'math'.");
+    test_math.dependOn(&math.builder.top_level_steps.get("test").?.step);
 }

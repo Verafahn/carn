@@ -1,4 +1,5 @@
 pub const utils = @import("utils/root.zig");
+pub const math = @import("math");
 
 pub const render = struct {
     pub const rhi = @import("render/rhi");
