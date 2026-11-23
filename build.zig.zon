@@ -7,6 +7,9 @@
         .render = .{
             .path = "packages/render",
         },
+        .math = .{
+            .path = "packages/math",
+        },
     },
     .paths = .{
         "build.zig",
