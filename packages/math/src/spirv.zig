@@ -2,79 +2,61 @@
 //!
 //! The build compiles this file for the
 //! `spirv32-vulkan` target; host code never imports
-//! it. The entry point calls one operation per
-//! module so the shader backend analyses the shared
-//! code paths.
+//! it. The entry point calls one operation per group
+//! so the shader backend analyses the shared paths.
 
 const std = @import("std");
 const spirv = std.spirv;
 const math = @import("root.zig");
 
 export fn main() callconv(.spirv_vertex) void {
-    const position: math.Vec3(f32) = .{ 1, 2, 3 };
-    const unit = math.vec.normalize(position);
-    const rotation = math.quat.fromAxisAngle(unit, 0.5);
-    const matrix = math.quat.toMat3(rotation);
-    const rotated = math.mat.mulVec(matrix, position);
-    const plane = math.bounds.fromPointNormal(
-        rotated,
-        math.vec.normalize(math.vec.cross(position, rotated)),
-    );
-    const height = math.bounds.signedDistance(plane, rotated);
-    const reflected = math.vec.reflect(position, unit);
-    const blended = math.interp.lerp(
+    const Vec2f = math.Vec2(f32);
+    const Vec3f = math.Vec3(f32);
+
+    const position = Vec3f.fromElements(.{ 1, 2, 3 });
+    const unit = position.normalize();
+    const rotation = math.Quat(f32).fromAxisAngle(unit, 0.5);
+    const matrix = rotation.toMat3();
+    const rotated = position.mulMatrix(3, matrix);
+    const normal = position.cross(rotated).normalize();
+    const plane = math.Plane(f32).fromPointNormal(rotated, normal);
+    const height = plane.signedDistance(rotated);
+    const reflected = position.reflect(unit);
+    const blended = math.curve.interp.lerp(
+        Vec3f,
         reflected,
-        math.vec.splat(math.Vec3(f32), height),
-        math.easing.easeInOutQuad(@as(f32, 0.25)),
+        Vec3f.splat(height),
+        math.curve.easing.easeInOutQuad(f32, 0.25),
     );
-    const sample = math.sampling.uniformSphere(@Vector(2, f32){
-        math.sampling.halton(3, 2),
-        math.sampling.sobol2(3)[1],
-    });
-    const ray = math.geometry.Ray(f32){
-        .origin = position,
-        .direction = sample,
-    };
-    const hit = math.geometry.raySphere(
-        ray,
-        math.bounds.Sphere(f32){ .center = rotated, .radius = 1 },
+
+    const sample = math.Sampling(f32).uniformSphere(Vec2f
+        .fromElements(.{
+        math.Sampling(f32).halton(3, 2),
+        math.Sampling(f32).sobol2(3).at(1),
+    }));
+    const ray = math.Ray(f32).fromPoints(position, sample);
+    const hit = ray.intersectSphere(
+        math.Sphere(f32){ .center = rotated, .radius = 1 },
         1e-6,
     );
     const distance = if (hit) |value| value.far else 0;
-    const color = math.color.hsvToRgb(@Vector(3, f32){
-        math.color.rgbToHsv(math.Rgb(f32){
-            .r = 1,
-            .g = 0.5,
-            .b = 0.25,
-        })[0],
-        0.5,
-        1,
-    });
-    const shaded = math.color.linearToSrgb(@Vector(3, f32){
-        color.r,
-        color.g,
-        color.b,
-    });
-    const angle = math.euler.degreesToRadians(@as(f32, 90));
-    const local = math.transform.transformPoint(
-        math.camera.perspective(
-            angle,
-            1.5,
-            0.1,
-            100,
-        ),
-        blended,
-    );
-    const target = math.basis.orthonormalBasis(
-        math.vec.normalize(local),
-        1e-6,
-    );
-    const spread = if (target) |frame| frame[0][0] else 0;
+
+    const color = math.Rgb(f32)
+        .fromHsv(Vec3f.fromElements(.{ 0.5, 0.5, 1 }))
+        .linearToSrgb();
+    const shaded = color.toVector();
+    const angle = math.Euler(f32).degreesToRadians(90);
+    const local = math.Camera(f32)
+        .perspective(angle, 1.5, 0.1, 100)
+        .transformPoint(blended);
+    const frame = math.Basis(f32)
+        .fromNormal(local.normalize(), 1e-6);
+    const spread = if (frame) |value| value.tangent.at(0) else 0;
 
     spirv.position_out.* = .{
-        shaded[0] + spread + distance + angle,
-        shaded[1],
-        shaded[2],
+        shaded.at(0) + spread + distance + angle,
+        shaded.at(1),
+        shaded.at(2),
         1,
     };
 }

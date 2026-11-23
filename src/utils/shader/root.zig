@@ -1113,12 +1113,13 @@ test "math matrices forward through the boundary" {
     var value: Camera = undefined;
     @memset(std.mem.asBytes(&value), 0);
     value.view_projection = math.Mat4(f32).fromRows(.{
-        .{ 1, 2, 3, 4 },
-        .{ 5, 6, 7, 8 },
-        .{ 9, 10, 11, 12 },
-        .{ 13, 14, 15, 16 },
+        math.Vec4(f32).fromElements(.{ 1, 2, 3, 4 }),
+        math.Vec4(f32).fromElements(.{ 5, 6, 7, 8 }),
+        math.Vec4(f32).fromElements(.{ 9, 10, 11, 12 }),
+        math.Vec4(f32).fromElements(.{ 13, 14, 15, 16 }),
     });
-    value.tint = .{ 0.25, 0.5, 0.75, 1 };
+    value.tint = math.Vec4(f32)
+        .fromElements(.{ 0.25, 0.5, 0.75, 1 });
     try U.write(value, buffer);
 
     const bytes = try buffer.map(0, U.buffer_size, .{ .read = true });
